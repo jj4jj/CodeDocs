@@ -46,7 +46,7 @@ from codewiki.src.be.prompt_template import (
     format_system_prompt,
     format_leaf_system_prompt,
 )
-from codewiki.src.be.utils import is_complex_module
+from codewiki.src.be.utils import is_complex_module, validate_mermaid_diagrams
 from codewiki.src.config import (
     Config,
     MODULE_TREE_FILENAME,
@@ -130,16 +130,45 @@ class AgentOrchestrator:
         
         # Run agent
         try:
-            result = await agent.run(
-                format_user_prompt(
-                    module_name=module_name,
-                    core_component_ids=core_component_ids,
-                    components=components,
-                    module_tree=deps.module_tree
-                ),
+            base_prompt = format_user_prompt(
+                module_name=module_name,
+                core_component_ids=core_component_ids,
+                components=components,
+                module_tree=deps.module_tree
+            )
+            await agent.run(
+                base_prompt,
                 deps=deps
             )
-            
+
+            docs_filename = f"{module_name}.md"
+            docs_target_path = os.path.join(working_dir, docs_filename)
+            if os.path.exists(docs_target_path):
+                validation_result = await validate_mermaid_diagrams(
+                    docs_target_path, docs_filename
+                )
+                if _has_mermaid_errors(validation_result):
+                    logger.warning(
+                        f"Mermaid validation failed for {docs_filename}. Retrying once..."
+                    )
+                    repair_prompt = (
+                        base_prompt
+                        + "\n\nYour previous markdown has Mermaid validation errors.\n"
+                        + "Use str_replace_editor to fix the existing markdown file.\n"
+                        + validation_result
+                    )
+                    await agent.run(
+                        repair_prompt,
+                        deps=deps
+                    )
+                    validation_result = await validate_mermaid_diagrams(
+                        docs_target_path, docs_filename
+                    )
+                    if _has_mermaid_errors(validation_result):
+                        raise ValueError(
+                            f"Mermaid validation failed for {docs_filename}. {validation_result}"
+                        )
+
             # Save updated module tree
             file_manager.save_json(deps.module_tree, module_tree_path)
             logger.debug(f"Successfully processed module: {module_name}")
@@ -150,3 +179,7 @@ class AgentOrchestrator:
             logger.error(f"Error processing module {module_name}: {str(e)}")
             logger.error(f"Traceback: {traceback.format_exc()}")
             raise
+
+
+def _has_mermaid_errors(validation_result: str) -> bool:
+    return validation_result.startswith("Mermaid syntax errors found in file:")

@@ -12,6 +12,7 @@ import asyncio
 import traceback
 import shlex
 import argparse
+import logging
 from datetime import datetime
 from pathlib import Path
 from queue import Queue
@@ -41,9 +42,27 @@ CUSTOM_CLI_ARG_PARSER.add_argument("--exclude", type=str)
 CUSTOM_CLI_ARG_PARSER.add_argument("--focus", type=str)
 CUSTOM_CLI_ARG_PARSER.add_argument("--doc-type", type=str)
 CUSTOM_CLI_ARG_PARSER.add_argument("--instructions", type=str)
+CUSTOM_CLI_ARG_PARSER.add_argument("--skills", type=str)
 CUSTOM_CLI_ARG_PARSER.add_argument("--concurrency", type=int)
 CUSTOM_CLI_ARG_PARSER.add_argument("--github-pages", action="store_true")
 CUSTOM_CLI_ARG_PARSER.add_argument("--no-cache", action="store_true")
+CUSTOM_CLI_ARG_PARSER.add_argument("-v", "--verbose", action="store_true")
+
+
+class _JobLogHandler(logging.Handler):
+    """Logging handler that forwards backend logs into a job's log file."""
+
+    def __init__(self, worker: "BackgroundWorker", job: JobStatus):
+        super().__init__()
+        self.worker = worker
+        self.job = job
+
+    def emit(self, record: logging.LogRecord):
+        try:
+            message = self.format(record)
+            self.worker._append_job_log(self.job, message)
+        except Exception:
+            pass
 
 
 class JobStoppedError(Exception):
@@ -101,6 +120,41 @@ class BackgroundWorker:
         if self._is_stop_requested(job.job_id):
             raise JobStoppedError("Task stopped by user")
 
+    def _attach_backend_job_logger(self, job: JobStatus):
+        """
+        Attach a temporary INFO handler for backend logger to the job log.
+
+        Returns tuple for teardown: (logger, handler, old_level, old_propagate)
+        """
+        backend_logger = logging.getLogger("codewiki.src.be")
+        old_level = backend_logger.level
+        old_propagate = backend_logger.propagate
+
+        handler = _JobLogHandler(self, job)
+        handler.setLevel(logging.INFO)
+        handler.setFormatter(
+            logging.Formatter("[%(levelname)s] %(name)s: %(message)s")
+        )
+
+        backend_logger.addHandler(handler)
+        backend_logger.setLevel(logging.INFO)
+        backend_logger.propagate = False
+        return backend_logger, handler, old_level, old_propagate
+
+    def _detach_backend_job_logger(self, logger_ctx):
+        """Detach temporary backend logger handler created by _attach_backend_job_logger."""
+        if not logger_ctx:
+            return
+
+        backend_logger, handler, old_level, old_propagate = logger_ctx
+        try:
+            backend_logger.removeHandler(handler)
+            handler.close()
+        except Exception:
+            pass
+        backend_logger.setLevel(old_level)
+        backend_logger.propagate = old_propagate
+
     def stop_job(self, job_id: str) -> Tuple[bool, str]:
         """Request stop for a queued/processing job."""
         job = self.job_status.get(job_id)
@@ -157,6 +211,7 @@ class BackgroundWorker:
             or parsed_args.focus
             or parsed_args.doc_type
             or parsed_args.instructions
+            or parsed_args.skills
         ):
             config.agent_instructions = config.agent_instructions or {}
             if parsed_args.include:
@@ -175,6 +230,10 @@ class BackgroundWorker:
                 config.agent_instructions["doc_type"] = parsed_args.doc_type
             if parsed_args.instructions:
                 config.agent_instructions["custom_instructions"] = parsed_args.instructions
+            if parsed_args.skills:
+                config.agent_instructions["skills"] = [
+                    part.strip() for part in parsed_args.skills.split(",") if part.strip()
+                ]
     
     def start(self):
         """Start the background worker thread."""
@@ -336,6 +395,8 @@ class BackgroundWorker:
         temp_repo_dir = None
         custom_args = None
         custom_unknown_args: List[str] = []
+        backend_logger_ctx = None
+        verbose_requested = False
         
         try:
             # Initialize/clear per-job log file for this run
@@ -351,6 +412,9 @@ class BackgroundWorker:
                     try:
                         custom_args, custom_unknown_args = self._parse_custom_cli_args(custom_cli_args_text)
                         self._append_job_log(job, f"Custom CLI args: {custom_cli_args_text}")
+                        verbose_requested = bool(getattr(custom_args, "verbose", False))
+                        if verbose_requested:
+                            self._append_job_log(job, "Verbose mode enabled via custom args (-v/--verbose)")
                         if custom_unknown_args:
                             self._append_job_log(
                                 job,
@@ -425,7 +489,14 @@ class BackgroundWorker:
                     config.max_token_per_leaf_module = job.options.max_token_per_leaf_module
                 if job.options.concurrency is not None:
                     config.concurrency = max(1, job.options.concurrency)
-                if job.options.include or job.options.exclude or job.options.focus or job.options.doc_type or job.options.instructions:
+                if (
+                    job.options.include
+                    or job.options.exclude
+                    or job.options.focus
+                    or job.options.doc_type
+                    or job.options.instructions
+                    or job.options.skills
+                ):
                     config.agent_instructions = config.agent_instructions or {}
                     if job.options.include:
                         config.agent_instructions['include_patterns'] = [
@@ -443,12 +514,19 @@ class BackgroundWorker:
                         config.agent_instructions['doc_type'] = job.options.doc_type
                     if job.options.instructions:
                         config.agent_instructions['custom_instructions'] = job.options.instructions
+                    if job.options.skills:
+                        config.agent_instructions['skills'] = [
+                            part.strip() for part in job.options.skills.split(',') if part.strip()
+                        ]
 
             # Custom CLI args override regular options where relevant.
             if custom_args:
                 self._apply_custom_cli_args_to_config(config, custom_args)
             
             self._append_job_log(job, f"Effective docs output: {config.docs_dir}")
+            if verbose_requested:
+                backend_logger_ctx = self._attach_backend_job_logger(job)
+                self._append_job_log(job, "Streaming backend INFO logs to job log")
             self._set_progress(job, "Generating documentation...")
             self._check_stop_requested(job)
             
@@ -583,6 +661,7 @@ class BackgroundWorker:
             self.save_job_statuses()
         
         finally:
+            self._detach_backend_job_logger(backend_logger_ctx)
             self._clear_stop_request(job_id)
             # Cleanup temporary repository
             if temp_repo_dir and os.path.exists(temp_repo_dir):

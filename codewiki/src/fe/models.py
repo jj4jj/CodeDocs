@@ -21,6 +21,7 @@ class GenerationOptions(BaseModel):
     focus: Optional[str] = None
     doc_type: Optional[str] = None
     instructions: Optional[str] = None
+    skills: Optional[str] = None
     max_tokens: Optional[int] = None
     max_token_per_module: Optional[int] = None
     max_token_per_leaf_module: Optional[int] = None
@@ -51,6 +52,8 @@ class GenerationOptions(BaseModel):
             args.extend(["--doc-type", self.doc_type])
         if self.instructions:
             args.extend(["--instructions", self.instructions])
+        if self.skills:
+            args.extend(["--skills", self.skills])
         if self.max_tokens is not None:
             args.extend(["--max-tokens", str(self.max_tokens)])
         if self.max_token_per_module is not None:

@@ -26,6 +26,7 @@ class AgentInstructions:
     - Module focus (prioritize certain modules)
     - Documentation type (API docs, architecture docs, etc.)
     - Custom instructions for the LLM
+    - Built-in prompt skills
     
     Attributes:
         include_patterns: File patterns to include (e.g., ["*.cs", "*.py"])
@@ -33,12 +34,14 @@ class AgentInstructions:
         focus_modules: Modules to document in more detail
         doc_type: Type of documentation to generate
         custom_instructions: Additional instructions for the documentation agent
+        skills: Built-in prompt skills to enable
     """
     include_patterns: Optional[List[str]] = None  # e.g., ["*.cs"] for C# projects
     exclude_patterns: Optional[List[str]] = None  # e.g., ["*Tests*", "*Specs*"]
     focus_modules: Optional[List[str]] = None  # e.g., ["src/core", "src/api"]
     doc_type: Optional[str] = None  # e.g., "api", "architecture", "user-guide"
     custom_instructions: Optional[str] = None  # Free-form instructions
+    skills: Optional[List[str]] = None  # e.g., ["mermaid-validator"]
     
     def to_dict(self) -> dict:
         """Convert to dictionary, excluding None values."""
@@ -53,6 +56,8 @@ class AgentInstructions:
             result['doc_type'] = self.doc_type
         if self.custom_instructions:
             result['custom_instructions'] = self.custom_instructions
+        if self.skills:
+            result['skills'] = self.skills
         return result
     
     @classmethod
@@ -64,6 +69,7 @@ class AgentInstructions:
             focus_modules=data.get('focus_modules'),
             doc_type=data.get('doc_type'),
             custom_instructions=data.get('custom_instructions'),
+            skills=data.get('skills'),
         )
     
     def is_empty(self) -> bool:
@@ -74,6 +80,7 @@ class AgentInstructions:
             self.focus_modules,
             self.doc_type,
             self.custom_instructions,
+            self.skills,
         ])
     
     def get_prompt_addition(self) -> str:
@@ -97,6 +104,9 @@ class AgentInstructions:
         
         if self.custom_instructions:
             additions.append(f"Additional instructions: {self.custom_instructions}")
+
+        if self.skills:
+            additions.append(f"Enabled skills: {', '.join(self.skills)}")
         
         return "\n".join(additions) if additions else ""
 
@@ -239,6 +249,7 @@ class Configuration:
                 focus_modules=runtime_instructions.focus_modules or self.agent_instructions.focus_modules,
                 doc_type=runtime_instructions.doc_type or self.agent_instructions.doc_type,
                 custom_instructions=runtime_instructions.custom_instructions or self.agent_instructions.custom_instructions,
+                skills=runtime_instructions.skills or self.agent_instructions.skills,
             )
         
         return Config.from_cli(
@@ -255,4 +266,3 @@ class Configuration:
             max_depth=self.max_depth,
             agent_instructions=final_instructions.to_dict() if final_instructions else None
         )
-

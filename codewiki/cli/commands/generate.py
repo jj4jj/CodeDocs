@@ -102,6 +102,12 @@ def parse_patterns(patterns_str: str) -> List[str]:
     help="Custom instructions for the documentation agent",
 )
 @click.option(
+    "--skills",
+    type=str,
+    default=None,
+    help="Comma-separated skills to enable (e.g., 'mermaid-validator')",
+)
+@click.option(
     "--verbose",
     "-v",
     is_flag=True,
@@ -181,6 +187,7 @@ def generate_command(
     focus: Optional[str],
     doc_type: Optional[str],
     instructions: Optional[str],
+    skills: Optional[str],
     verbose: bool,
     max_tokens: Optional[int],
     max_token_per_module: Optional[int],
@@ -225,6 +232,10 @@ def generate_command(
     \b
     # Custom instructions
     $ codewiki generate --instructions "Focus on public APIs and include usage examples"
+
+    \b
+    # Enable built-in skills
+    $ codewiki generate --skills "mermaid-validator"
     
     \b
     # Override max tokens for this generation
@@ -380,13 +391,14 @@ def generate_command(
         
         # Create runtime agent instructions from CLI options
         runtime_instructions = None
-        if any([include, exclude, focus, doc_type, instructions]):
+        if any([include, exclude, focus, doc_type, instructions, skills]):
             runtime_instructions = AgentInstructions(
                 include_patterns=parse_patterns(include) if include else None,
                 exclude_patterns=parse_patterns(exclude) if exclude else None,
                 focus_modules=parse_patterns(focus) if focus else None,
                 doc_type=doc_type,
                 custom_instructions=instructions,
+                skills=parse_patterns(skills) if skills else None,
             )
             
             if verbose:
@@ -400,6 +412,8 @@ def generate_command(
                     logger.debug(f"Doc type: {doc_type}")
                 if instructions:
                     logger.debug(f"Custom instructions: {instructions}")
+                if skills:
+                    logger.debug(f"Skills: {parse_patterns(skills)}")
         
         # Log max token settings if verbose
         if verbose:
@@ -422,6 +436,7 @@ def generate_command(
                 focus_modules=runtime_instructions.focus_modules or (config.agent_instructions.focus_modules if config.agent_instructions else None),
                 doc_type=runtime_instructions.doc_type or (config.agent_instructions.doc_type if config.agent_instructions else None),
                 custom_instructions=runtime_instructions.custom_instructions or (config.agent_instructions.custom_instructions if config.agent_instructions else None),
+                skills=runtime_instructions.skills or (config.agent_instructions.skills if config.agent_instructions else None),
             )
             agent_instructions_dict = merged.to_dict()
         elif config.agent_instructions and not config.agent_instructions.is_empty():
@@ -550,4 +565,3 @@ def generate_command(
         sys.exit(130)
     except Exception as e:
         sys.exit(handle_error(e, verbose=verbose))
-

@@ -112,12 +112,16 @@ class Config:
         if self.agent_instructions:
             return self.agent_instructions.get('custom_instructions')
         return None
+
+    @property
+    def skills(self) -> Optional[List[str]]:
+        """Get selected skill names from agent instructions."""
+        if self.agent_instructions:
+            return self.agent_instructions.get('skills')
+        return None
     
     def get_prompt_addition(self) -> str:
         """Generate prompt additions based on agent instructions."""
-        if not self.agent_instructions:
-            return ""
-        
         additions = []
         
         if self.doc_type:
@@ -137,6 +141,15 @@ class Config:
         
         if self.custom_instructions:
             additions.append(f"Additional instructions: {self.custom_instructions}")
+
+        try:
+            from codewiki.src.be.skill_manager import render_skills_prompt
+            skills_prompt = render_skills_prompt(self.skills)
+            if skills_prompt:
+                additions.append(skills_prompt)
+        except Exception:
+            # Skills are best-effort. Keep generation path robust even if skill loading fails.
+            pass
         
         return "\n".join(additions) if additions else ""
     

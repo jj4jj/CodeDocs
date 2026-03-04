@@ -1372,7 +1372,7 @@ ADMIN_TEMPLATE = """
 
                         <div class="field">
                             <label for="custom_cli_args">自定义命令参数</label>
-                            <input type="text" id="custom_cli_args" name="custom_cli_args" placeholder="例如: --index-page --max-depth 5">
+                            <input type="text" id="custom_cli_args" name="custom_cli_args" placeholder="例如: -v --index-page --max-depth 5">
                             <small style="display:block; margin-top:6px; color:var(--muted);">填写后会追加到 `codewiki generate` 命令参数末尾。</small>
                         </div>
 

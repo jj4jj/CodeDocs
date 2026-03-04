@@ -400,6 +400,8 @@ def config_show(output_json: bool):
                     click.echo(f"  Doc type:           {agent.doc_type}")
                 if agent.custom_instructions:
                     click.echo(f"  Custom instructions: {agent.custom_instructions[:50]}...")
+                if agent.skills:
+                    click.echo(f"  Skills:             {', '.join(agent.skills)}")
             else:
                 click.secho("  Using defaults (no custom settings)", fg="yellow")
             
@@ -646,6 +648,12 @@ def config_validate(quick: bool, verbose: bool):
     help="Custom instructions for the documentation agent",
 )
 @click.option(
+    "--skills",
+    type=str,
+    default=None,
+    help="Comma-separated skills to enable (e.g., 'mermaid-validator')",
+)
+@click.option(
     "--clear",
     is_flag=True,
     help="Clear all agent instructions",
@@ -656,6 +664,7 @@ def config_agent(
     focus: Optional[str],
     doc_type: Optional[str],
     instructions: Optional[str],
+    skills: Optional[str],
     clear: bool
 ):
     """
@@ -685,6 +694,10 @@ def config_agent(
     \b
     # Add custom instructions
     $ codewiki config agent --instructions "Focus on public APIs and include usage examples"
+
+    \b
+    # Enable built-in skills
+    $ codewiki config agent --skills "mermaid-validator"
     
     \b
     # Clear all agent instructions
@@ -710,7 +723,7 @@ def config_agent(
             return
         
         # Check if at least one option is provided
-        if not any([include, exclude, focus, doc_type, instructions]):
+        if not any([include, exclude, focus, doc_type, instructions, skills]):
             # Display current settings
             click.echo()
             click.secho("Agent Instructions", fg="blue", bold=True)
@@ -729,6 +742,8 @@ def config_agent(
                     click.echo(f"  Doc type:           {agent.doc_type}")
                 if agent.custom_instructions:
                     click.echo(f"  Custom instructions: {agent.custom_instructions}")
+                if agent.skills:
+                    click.echo(f"  Skills:             {', '.join(agent.skills)}")
             else:
                 click.secho("  No agent instructions configured (using defaults)", fg="yellow")
             
@@ -750,6 +765,8 @@ def config_agent(
             current.doc_type = doc_type if doc_type else None
         if instructions is not None:
             current.custom_instructions = instructions if instructions else None
+        if skills is not None:
+            current.skills = parse_patterns(skills) if skills else None
         
         config.agent_instructions = current
         manager.save()
@@ -766,6 +783,8 @@ def config_agent(
             click.secho(f"✓ Doc type: {doc_type}", fg="green")
         if instructions:
             click.secho(f"✓ Custom instructions set", fg="green")
+        if skills:
+            click.secho(f"✓ Skills: {parse_patterns(skills)}", fg="green")
         
         click.echo("\n" + click.style("Agent instructions updated successfully.", fg="green", bold=True))
         click.echo()

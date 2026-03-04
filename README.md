@@ -450,6 +450,7 @@ curl -X DELETE "http://localhost:8000/api/tasks/owner--repo"
 | `--max-token-per-module N` | 模块聚类输入 token 阈值 | 36369 |
 | `--max-token-per-leaf-module N` | 叶模块输入 token 阈值 | 16000 |
 | `--max-depth N` | 层次分解最大深度 | 2 |
+| `--skills S1,S2` | 启用内置提示词技能（如 Mermaid 校验） | `mermaid-validator` |
 
 ---
 

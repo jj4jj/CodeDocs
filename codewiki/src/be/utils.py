@@ -141,6 +141,10 @@ async def validate_single_diagram(diagram_content: str, diagram_num: int, line_s
     from io import StringIO
 
     core_error = ""
+
+    compat_errors = lint_mermaid_runtime_compat(diagram_content, diagram_num, line_start)
+    if compat_errors:
+        return "\n".join(compat_errors)
     
     try:
         from mermaid_parser.parser import parse_mermaid_py
@@ -197,6 +201,47 @@ async def validate_single_diagram(diagram_content: str, diagram_num: int, line_s
             return f"Diagram {diagram_num}: {core_error}"
     
     return ""  # No error
+
+
+def lint_mermaid_runtime_compat(
+    diagram_content: str,
+    diagram_num: int,
+    line_start: int,
+) -> List[str]:
+    """
+    Lightweight lints for patterns that often fail in Mermaid 11.x runtime.
+
+    These checks complement parser-based validation because older parser bindings
+    may accept classDiagram signatures that fail in the browser renderer.
+    """
+    errors: List[str] = []
+    lines = diagram_content.splitlines()
+
+    first_non_empty = ""
+    for line in lines:
+        stripped = line.strip()
+        if stripped:
+            first_non_empty = stripped
+            break
+
+    if not first_non_empty.startswith("classDiagram"):
+        return errors
+
+    tuple_return_re = re.compile(r"^[+\-#~][A-Za-z_]\w*\([^)]*\)\s*\([^)]*,[^)]*\)")
+
+    for i, line in enumerate(lines, 1):
+        stripped = line.strip()
+        if not stripped or stripped.startswith("%%"):
+            continue
+
+        if tuple_return_re.search(stripped):
+            absolute_line = line_start + i - 1
+            errors.append(
+                f"Diagram {diagram_num}: Mermaid 11.x compatibility error on line {absolute_line}: "
+                f"avoid tuple return signatures in classDiagram methods -> `{stripped}`"
+            )
+
+    return errors
 
 
 if __name__ == "__main__":

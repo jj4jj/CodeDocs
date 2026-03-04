@@ -99,7 +99,7 @@ packages = [
 ]
 
 [tool.setuptools.package-data]
-codewiki = ["templates/**/*", "py.typed"]
+codewiki = ["templates/**/*", "src/be/skills/*.md", "py.typed"]
 
 [tool.black]
 line-length = 100

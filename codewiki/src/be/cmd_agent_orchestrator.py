@@ -27,7 +27,7 @@ from codewiki.src.be.prompt_template import (
     REPO_OVERVIEW_PROMPT,
     MODULE_OVERVIEW_PROMPT,
 )
-from codewiki.src.be.utils import is_complex_module
+from codewiki.src.be.utils import is_complex_module, validate_mermaid_diagrams
 from codewiki.src.config import Config, MODULE_TREE_FILENAME, OVERVIEW_FILENAME
 from codewiki.src.utils import file_manager
 from codewiki.src.be.dependency_analyzer.models.core import Node
@@ -143,6 +143,19 @@ class CmdAgentOrchestrator:
             markdown = _strip_code_fence(markdown)
 
             file_manager.save_text(markdown, docs_path)
+            validation_result = await validate_mermaid_diagrams(docs_path, f"{module_name}.md")
+            if _has_mermaid_errors(validation_result):
+                logger.warning(
+                    f"[CmdAgent] Mermaid validation failed for {module_name}. Retrying once..."
+                )
+                repair_prompt = _build_mermaid_repair_prompt(prompt, markdown, validation_result)
+                markdown = _strip_code_fence(run_agent_cmd(self.agent_cmd, repair_prompt, cwd=working_dir))
+                file_manager.save_text(markdown, docs_path)
+                validation_result = await validate_mermaid_diagrams(docs_path, f"{module_name}.md")
+                if _has_mermaid_errors(validation_result):
+                    raise ValueError(
+                        f"Mermaid validation failed for {module_name}. {validation_result}"
+                    )
             logger.info(f"[CmdAgent] ✓ Wrote {len(markdown)} chars → {docs_path}")
 
         except Exception:
@@ -205,6 +218,24 @@ class CmdAgentOrchestrator:
             raw_output = run_agent_cmd(self.agent_cmd, prompt, cwd=working_dir)
             content = _extract_overview(raw_output)
             file_manager.save_text(content, parent_docs_path)
+            validation_result = await validate_mermaid_diagrams(
+                parent_docs_path, os.path.basename(parent_docs_path)
+            )
+            if _has_mermaid_errors(validation_result):
+                logger.warning(
+                    f"[CmdAgent] Mermaid validation failed for {module_name} overview. Retrying once..."
+                )
+                repair_prompt = _build_mermaid_repair_prompt(prompt, content, validation_result)
+                raw_output = run_agent_cmd(self.agent_cmd, repair_prompt, cwd=working_dir)
+                content = _extract_overview(raw_output)
+                file_manager.save_text(content, parent_docs_path)
+                validation_result = await validate_mermaid_diagrams(
+                    parent_docs_path, os.path.basename(parent_docs_path)
+                )
+                if _has_mermaid_errors(validation_result):
+                    raise ValueError(
+                        f"Mermaid validation failed for {module_name} overview. {validation_result}"
+                    )
             logger.info(f"[CmdAgent] ✓ Parent docs → {parent_docs_path}")
         except Exception:
             logger.exception(f"[CmdAgent] Failed to generate parent docs for {module_name}")
@@ -226,6 +257,28 @@ def _strip_code_fence(text: str) -> str:
         inner = lines[1:-1] if lines[-1].strip() == "```" else lines[1:]
         return "\n".join(inner).strip()
     return text
+
+
+def _has_mermaid_errors(validation_result: str) -> bool:
+    return validation_result.startswith("Mermaid syntax errors found in file:")
+
+
+def _build_mermaid_repair_prompt(
+    base_prompt: str,
+    previous_markdown: str,
+    validation_result: str,
+) -> str:
+    return (
+        f"{base_prompt}\n\n"
+        "Previous output failed Mermaid validation. Regenerate the markdown and fix Mermaid syntax.\n"
+        "Validation result:\n"
+        f"{validation_result}\n\n"
+        "Previous markdown:\n"
+        "```markdown\n"
+        f"{previous_markdown}\n"
+        "```\n"
+        "Return only corrected markdown."
+    )
 
 
 def _extract_overview(text: str) -> str:
