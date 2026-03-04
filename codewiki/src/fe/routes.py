@@ -98,7 +98,10 @@ class WebRoutes:
                 message_type = "error"
             else:
                 # Check cache
-                cached_docs = self.cache_manager.get_cached_docs(normalized_repo_url)
+                cached_docs = self.cache_manager.get_cached_docs(
+                    normalized_repo_url,
+                    cache_scope=self._job_cache_scope(job_id),
+                )
                 if cached_docs and Path(cached_docs).exists():
                     message = "Documentation found in cache! Redirecting to view..."
                     message_type = "success"
@@ -201,30 +204,44 @@ class WebRoutes:
             repo_url = job.repo_url
         else:
             # No job status - try to find documentation in cache by job_id
-            # Convert job_id back to repo full name
-            repo_full_name = self._job_id_to_repo_full_name(job_id)
-            
-            # Try multiple URL formats to find cached documentation
-            # 1. Try GitHub URL (most common)
-            potential_repo_url = f"https://github.com/{repo_full_name}"
-            cached_docs = self.cache_manager.get_cached_docs(potential_repo_url)
-            
-            # 2. If not found, try GitLab URL
+            potential_repo_url = None
+            cached_docs = None
+            matched_cache_entry = None
+
+            # 1) Exact cache entry by job_id (supports subprojects/variants)
+            for _, entry in self.cache_manager.cache_index.items():
+                if entry.job_id == job_id and entry.docs_path and Path(entry.docs_path).exists():
+                    cached_docs = entry.docs_path
+                    potential_repo_url = entry.repo_url
+                    matched_cache_entry = entry
+                    break
+
+            # 2) Backward-compatible lookup by repo full name
             if not cached_docs:
-                potential_repo_url = f"https://gitlab.com/{repo_full_name}"
-                cached_docs = self.cache_manager.get_cached_docs(potential_repo_url)
-            
-            # 3. If still not found, search all cache entries for matching full_name
-            if not cached_docs:
-                for repo_hash, entry in self.cache_manager.cache_index.items():
-                    try:
-                        entry_repo_info = GitHubRepoProcessor.get_repo_info(entry.repo_url)
-                        if entry_repo_info['full_name'] == repo_full_name:
-                            cached_docs = entry.docs_path
-                            potential_repo_url = entry.repo_url
-                            break
-                    except Exception:
-                        continue
+                repo_full_name = self._job_id_to_repo_full_name(job_id)
+
+                potential_repo_url = f"https://github.com/{repo_full_name}"
+                cached_docs = self.cache_manager.get_cached_docs(
+                    potential_repo_url, cache_scope=self._job_cache_scope(job_id)
+                )
+
+                if not cached_docs:
+                    potential_repo_url = f"https://gitlab.com/{repo_full_name}"
+                    cached_docs = self.cache_manager.get_cached_docs(
+                        potential_repo_url, cache_scope=self._job_cache_scope(job_id)
+                    )
+
+                if not cached_docs:
+                    for _, entry in self.cache_manager.cache_index.items():
+                        try:
+                            entry_repo_info = GitHubRepoProcessor.get_repo_info(entry.repo_url)
+                            if entry_repo_info['full_name'] == repo_full_name:
+                                cached_docs = entry.docs_path
+                                potential_repo_url = entry.repo_url
+                                matched_cache_entry = entry
+                                break
+                        except Exception:
+                            continue
             
             if cached_docs and Path(cached_docs).exists():
                 docs_path = Path(cached_docs)
@@ -234,6 +251,7 @@ class WebRoutes:
                 job = JobStatus(
                     job_id=job_id,
                     repo_url=potential_repo_url,
+                    title=matched_cache_entry.title if matched_cache_entry and matched_cache_entry.title else "",
                     status='completed',
                     created_at=datetime.now(),
                     completed_at=datetime.now(),
@@ -341,14 +359,60 @@ class WebRoutes:
         except Exception:
             # Fallback to basic normalization
             return url.rstrip('/').lower()
-    
-    def _repo_full_name_to_job_id(self, full_name: str) -> str:
-        """Convert repo full name to URL-safe job ID."""
-        return full_name.replace('/', '--')
-    
+
+    def _normalize_subproject_path(self, subproject_path: str) -> str:
+        """Normalize subproject path for stable job/cache keys."""
+        if not subproject_path:
+            return ""
+        normalized = subproject_path.strip().replace("\\", "/")
+        while normalized.startswith("./"):
+            normalized = normalized[2:]
+        normalized = normalized.strip("/")
+        if normalized in {"", "."}:
+            return ""
+        return normalized
+
+    def _sanitize_job_segment(self, value: str) -> str:
+        """Sanitize arbitrary text into a URL-safe job id segment."""
+        cleaned = re.sub(r"[^a-zA-Z0-9._-]+", "-", (value or "").strip())
+        cleaned = re.sub(r"-{2,}", "-", cleaned).strip("-")
+        return cleaned[:80] if cleaned else ""
+
+    def _subproject_key(self, subproject_name: str = "", subproject_path: str = "") -> str:
+        """Build a stable subproject key from name/path."""
+        safe_name = self._sanitize_job_segment(subproject_name)
+        normalized_path = self._normalize_subproject_path(subproject_path)
+        safe_path = self._sanitize_job_segment(normalized_path.replace("/", "__"))
+        return safe_name or safe_path
+
+    def _subproject_label(self, subproject_name: str = "", subproject_path: str = "") -> str:
+        """Human-readable subproject label."""
+        if subproject_name and subproject_name.strip():
+            return subproject_name.strip()
+        normalized_path = self._normalize_subproject_path(subproject_path)
+        return normalized_path or ""
+
+    def _repo_full_name_to_job_id(
+        self,
+        full_name: str,
+        subproject_name: str = "",
+        subproject_path: str = "",
+    ) -> str:
+        """Convert repo + optional subproject into URL-safe job ID."""
+        base_id = full_name.replace('/', '--')
+        sub_key = self._subproject_key(subproject_name, subproject_path)
+        if not sub_key:
+            return base_id
+        return f"{base_id}__sp__{sub_key}"
+
     def _job_id_to_repo_full_name(self, job_id: str) -> str:
         """Convert job ID back to repo full name."""
-        return job_id.replace('--', '/')
+        base_id = job_id.split("__sp__", 1)[0]
+        return base_id.replace('--', '/')
+
+    def _job_cache_scope(self, job_id: str) -> str:
+        """Cache scope for a job variant (repo root or subproject)."""
+        return job_id
 
     def _build_regeneration_output(self, job_id: str):
         """Return a versioned output directory and version label for regeneration."""
@@ -545,11 +609,13 @@ class WebRoutes:
         for entry in self.cache_manager.cache_index.values():
             if not entry.docs_path or not Path(entry.docs_path).exists():
                 continue
-            try:
-                repo_info = GitHubRepoProcessor.get_repo_info(entry.repo_url)
-                job_id = self._repo_full_name_to_job_id(repo_info['full_name'])
-            except Exception:
-                continue
+            job_id = (entry.job_id or "").strip()
+            if not job_id:
+                try:
+                    repo_info = GitHubRepoProcessor.get_repo_info(entry.repo_url)
+                    job_id = self._repo_full_name_to_job_id(repo_info['full_name'])
+                except Exception:
+                    continue
             
             if job_id in completed:
                 continue
@@ -557,7 +623,7 @@ class WebRoutes:
             completed[job_id] = JobStatus(
                 job_id=job_id,
                 repo_url=entry.repo_url,
-                title=GitHubRepoProcessor.generate_title(entry.repo_url),
+                title=entry.title or GitHubRepoProcessor.generate_title(entry.repo_url),
                 status='completed',
                 created_at=entry.created_at,
                 completed_at=entry.created_at,
@@ -605,6 +671,8 @@ class WebRoutes:
         self,
         repo_url: str,
         commit_id: str = "",
+        subproject_name: str = "",
+        subproject_path: str = "",
         priority: int = 0,
         output: str = "docs/codewiki",
         create_branch: bool = False,
@@ -637,10 +705,30 @@ class WebRoutes:
         
         normalized_repo_url = self._normalize_github_url(repo_url)
         repo_info = GitHubRepoProcessor.get_repo_info(normalized_repo_url)
-        job_id = self._repo_full_name_to_job_id(repo_info['full_name'])
+        normalized_subproject_path = self._normalize_subproject_path(subproject_path)
+        normalized_subproject_name = (subproject_name or "").strip()
+        if normalized_subproject_path and (
+            normalized_subproject_path == ".."
+            or normalized_subproject_path.startswith("../")
+            or "/../" in normalized_subproject_path
+        ):
+            raise HTTPException(status_code=400, detail="Invalid subproject path")
+        job_id = self._repo_full_name_to_job_id(
+            repo_info['full_name'],
+            subproject_name=normalized_subproject_name,
+            subproject_path=normalized_subproject_path,
+        )
         title = GitHubRepoProcessor.generate_title(normalized_repo_url)
+        subproject_label = self._subproject_label(
+            subproject_name=normalized_subproject_name,
+            subproject_path=normalized_subproject_path,
+        )
+        if subproject_label:
+            title = f"{title} [{subproject_label}]"
         
         options = GenerationOptions(
+            subproject_name=normalized_subproject_name or None,
+            subproject_path=normalized_subproject_path or None,
             output=output.strip() if output and output.strip() != "docs/codewiki" else None,
             create_branch=create_branch,
             github_pages=github_pages,
@@ -683,6 +771,8 @@ class WebRoutes:
             "job_id": job_id,
             "title": title,
             "repo_url": normalized_repo_url,
+            "subproject_name": normalized_subproject_name,
+            "subproject_path": normalized_subproject_path,
             "status": "queued",
             "message": "Task created successfully"
         })
@@ -821,6 +911,8 @@ class WebRoutes:
     async def admin_post(self, request: Request, 
                          repo_url: str = Form(...), 
                          commit_id: str = Form(""), 
+                         subproject_name: str = Form(""),
+                         subproject_path: str = Form(""),
                          priority: int = Form(0),
                          output: str = Form("docs/codewiki"),
                          create_branch: bool = Form(False),
@@ -860,10 +952,34 @@ class WebRoutes:
         
         normalized_repo_url = self._normalize_github_url(repo_url)
         repo_info = GitHubRepoProcessor.get_repo_info(normalized_repo_url)
-        job_id = self._repo_full_name_to_job_id(repo_info['full_name'])
+        normalized_subproject_path = self._normalize_subproject_path(subproject_path)
+        normalized_subproject_name = (subproject_name or "").strip()
+        if normalized_subproject_path and (
+            normalized_subproject_path == ".."
+            or normalized_subproject_path.startswith("../")
+            or "/../" in normalized_subproject_path
+        ):
+            context = {
+                "error": "Invalid subproject path",
+                "jobs": self.background_worker.get_all_jobs().values()
+            }
+            return HTMLResponse(content=render_template(ADMIN_TEMPLATE, context), status_code=400)
+        job_id = self._repo_full_name_to_job_id(
+            repo_info['full_name'],
+            subproject_name=normalized_subproject_name,
+            subproject_path=normalized_subproject_path,
+        )
         title = GitHubRepoProcessor.generate_title(normalized_repo_url)
+        subproject_label = self._subproject_label(
+            subproject_name=normalized_subproject_name,
+            subproject_path=normalized_subproject_path,
+        )
+        if subproject_label:
+            title = f"{title} [{subproject_label}]"
 
         options = GenerationOptions(
+            subproject_name=normalized_subproject_name or None,
+            subproject_path=normalized_subproject_path or None,
             output=output.strip() if output and output.strip() != "docs/codewiki" else None,
             create_branch=create_branch,
             github_pages=github_pages,
@@ -893,7 +1009,10 @@ class WebRoutes:
             return HTMLResponse(content=render_template(ADMIN_TEMPLATE, context), status_code=409)
         
         custom_no_cache = bool(options.custom_cli_args and "--no-cache" in options.custom_cli_args)
-        cached_docs = self.cache_manager.get_cached_docs(normalized_repo_url)
+        cached_docs = self.cache_manager.get_cached_docs(
+            normalized_repo_url,
+            cache_scope=self._job_cache_scope(job_id),
+        )
         if cached_docs and Path(cached_docs).exists() and not options.no_cache and not custom_no_cache:
             job = JobStatus(
                 job_id=job_id,

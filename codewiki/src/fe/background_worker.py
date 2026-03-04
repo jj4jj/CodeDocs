@@ -120,6 +120,35 @@ class BackgroundWorker:
         if self._is_stop_requested(job.job_id):
             raise JobStoppedError("Task stopped by user")
 
+    def _resolve_subproject_repo_path(self, repo_root: str, subproject_path: str) -> str:
+        """
+        Resolve a subproject path under a cloned repository root safely.
+
+        Returns repository root when subproject_path is empty/'.'.
+        """
+        normalized = (subproject_path or "").strip().replace("\\", "/").strip("/")
+        if normalized in {"", "."}:
+            return os.path.abspath(repo_root)
+
+        repo_root_abs = os.path.abspath(repo_root)
+        candidate = os.path.abspath(os.path.join(repo_root_abs, normalized))
+        try:
+            if not Path(candidate).is_relative_to(Path(repo_root_abs)):
+                raise ValueError(
+                    f"Subproject path escapes repository root: '{subproject_path}'"
+                )
+        except AttributeError:
+            if not candidate.startswith(repo_root_abs):
+                raise ValueError(
+                    f"Subproject path escapes repository root: '{subproject_path}'"
+                )
+
+        if not os.path.exists(candidate):
+            raise ValueError(f"Subproject path does not exist: '{subproject_path}'")
+        if not os.path.isdir(candidate):
+            raise ValueError(f"Subproject path must be a directory: '{subproject_path}'")
+        return candidate
+
     def _attach_backend_job_logger(self, job: JobStatus, level: int = logging.INFO):
         """
         Attach a temporary INFO handler for backend logger to the job log.
@@ -305,20 +334,22 @@ class BackgroundWorker:
         try:
             cache_entries = self.cache_manager.cache_index
             reconstructed_count = 0
+            from .github_processor import GitHubRepoProcessor
             
             for repo_hash, cache_entry in cache_entries.items():
-                # Extract repo info to create job_id
-                from .github_processor import GitHubRepoProcessor
                 try:
-                    repo_info = GitHubRepoProcessor.get_repo_info(cache_entry.repo_url)
-                    job_id = repo_info['full_name'].replace('/', '--')
+                    if cache_entry.job_id:
+                        job_id = cache_entry.job_id
+                    else:
+                        repo_info = GitHubRepoProcessor.get_repo_info(cache_entry.repo_url)
+                        job_id = repo_info['full_name'].replace('/', '--')
                     
                     # Only add if job doesn't already exist
                     if job_id not in self.job_status:
                         self.job_status[job_id] = JobStatus(
                             job_id=job_id,
                             repo_url=cache_entry.repo_url,
-                            title=GitHubRepoProcessor.generate_title(cache_entry.repo_url),
+                            title=cache_entry.title or GitHubRepoProcessor.generate_title(cache_entry.repo_url),
                             status='completed',
                             created_at=cache_entry.created_at,
                             completed_at=cache_entry.created_at,
@@ -436,7 +467,12 @@ class BackgroundWorker:
                 (job.options and job.options.no_cache) or
                 (custom_args and getattr(custom_args, "no_cache", False))
             )
-            cached_docs = self.cache_manager.get_cached_docs(job.repo_url) if use_cache else None
+            cache_scope = job.job_id
+            cached_docs = (
+                self.cache_manager.get_cached_docs(job.repo_url, cache_scope=cache_scope)
+                if use_cache
+                else None
+            )
             if cached_docs and Path(cached_docs).exists():
                 job.status = 'completed'
                 job.completed_at = datetime.now()
@@ -467,7 +503,16 @@ class BackgroundWorker:
             self._set_progress(job, "Analyzing repository structure...")
             
             # Create config for documentation generation (using env vars)
-            args = argparse.Namespace(repo_path=temp_repo_dir)
+            project_repo_path = temp_repo_dir
+            if job.options and job.options.subproject_path:
+                project_repo_path = self._resolve_subproject_repo_path(
+                    temp_repo_dir, job.options.subproject_path
+                )
+                self._append_job_log(
+                    job,
+                    f"Subproject path: {job.options.subproject_path} -> {project_repo_path}",
+                )
+            args = argparse.Namespace(repo_path=project_repo_path)
             config = Config.from_args(args)
             # Override docs_dir with job-specific directory
             default_docs_dir = os.path.join("output", "docs", f"{job_id}-docs")
@@ -575,7 +620,13 @@ class BackgroundWorker:
             
             # Cache the results
             docs_path = os.path.abspath(config.docs_dir)
-            self.cache_manager.add_to_cache(job.repo_url, docs_path)
+            self.cache_manager.add_to_cache(
+                job.repo_url,
+                docs_path,
+                cache_scope=cache_scope,
+                job_id=job.job_id,
+                title=job.title,
+            )
 
             # Generate GitHub Pages HTML viewer (optional)
             should_generate_github_pages = (

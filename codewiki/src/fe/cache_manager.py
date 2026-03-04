@@ -35,7 +35,10 @@ class CacheManager:
                         repo_url_hash=value['repo_url_hash'],
                         docs_path=value['docs_path'],
                         created_at=datetime.fromisoformat(value['created_at']),
-                        last_accessed=datetime.fromisoformat(value['last_accessed'])
+                        last_accessed=datetime.fromisoformat(value['last_accessed']),
+                        cache_scope=value.get('cache_scope', ''),
+                        job_id=value.get('job_id'),
+                        title=value.get('title'),
                     )
             except Exception as e:
                 print(f"Error loading cache index: {e}")
@@ -51,20 +54,25 @@ class CacheManager:
                     'repo_url_hash': entry.repo_url_hash,
                     'docs_path': entry.docs_path,
                     'created_at': entry.created_at.isoformat(),
-                    'last_accessed': entry.last_accessed.isoformat()
+                    'last_accessed': entry.last_accessed.isoformat(),
+                    'cache_scope': entry.cache_scope,
+                    'job_id': entry.job_id,
+                    'title': entry.title,
                 }
             
             file_manager.save_json(data, index_file)
         except Exception as e:
             print(f"Error saving cache index: {e}")
     
-    def get_repo_hash(self, repo_url: str) -> str:
+    def get_repo_hash(self, repo_url: str, cache_scope: str = "") -> str:
         """Generate hash for repository URL."""
-        return hashlib.sha256(repo_url.encode()).hexdigest()[:16]
+        scope = (cache_scope or "").strip()
+        composite = f"{repo_url}||{scope}"
+        return hashlib.sha256(composite.encode()).hexdigest()[:16]
     
-    def get_cached_docs(self, repo_url: str) -> Optional[str]:
+    def get_cached_docs(self, repo_url: str, cache_scope: str = "") -> Optional[str]:
         """Get cached documentation path if available."""
-        repo_hash = self.get_repo_hash(repo_url)
+        repo_hash = self.get_repo_hash(repo_url, cache_scope=cache_scope)
         
         if repo_hash in self.cache_index:
             entry = self.cache_index[repo_hash]
@@ -77,13 +85,20 @@ class CacheManager:
                 return entry.docs_path
             else:
                 # Cache expired, remove it
-                self.remove_from_cache(repo_url)
+                self.remove_from_cache(repo_url, cache_scope=cache_scope)
         
         return None
     
-    def add_to_cache(self, repo_url: str, docs_path: str):
+    def add_to_cache(
+        self,
+        repo_url: str,
+        docs_path: str,
+        cache_scope: str = "",
+        job_id: Optional[str] = None,
+        title: Optional[str] = None,
+    ):
         """Add documentation to cache."""
-        repo_hash = self.get_repo_hash(repo_url)
+        repo_hash = self.get_repo_hash(repo_url, cache_scope=cache_scope)
         now = datetime.now()
         
         self.cache_index[repo_hash] = CacheEntry(
@@ -91,14 +106,17 @@ class CacheManager:
             repo_url_hash=repo_hash,
             docs_path=docs_path,
             created_at=now,
-            last_accessed=now
+            last_accessed=now,
+            cache_scope=(cache_scope or "").strip(),
+            job_id=job_id,
+            title=title,
         )
         
         self.save_cache_index()
     
-    def remove_from_cache(self, repo_url: str):
+    def remove_from_cache(self, repo_url: str, cache_scope: str = ""):
         """Remove documentation from cache."""
-        repo_hash = self.get_repo_hash(repo_url)
+        repo_hash = self.get_repo_hash(repo_url, cache_scope=cache_scope)
         if repo_hash in self.cache_index:
             del self.cache_index[repo_hash]
             self.save_cache_index()

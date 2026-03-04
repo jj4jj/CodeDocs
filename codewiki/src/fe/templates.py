@@ -303,11 +303,14 @@ WEB_INTERFACE_TEMPLATE = """
 
             <div class="jobs" id="jobsContainer">
                 {% for job in recent_jobs %}
-                <article class="job" data-search="{{ (job.title or '') ~ ' ' ~ job.repo_url ~ ' ' ~ job.job_id ~ ' ' ~ (job.progress or '') }}">
+                <article class="job" data-search="{{ (job.title or '') ~ ' ' ~ job.repo_url ~ ' ' ~ job.job_id ~ ' ' ~ (job.progress or '') ~ ' ' ~ ((job.options.subproject_name if job.options and job.options.subproject_name else '') ) ~ ' ' ~ ((job.options.subproject_path if job.options and job.options.subproject_path else '') ) }}">
                     <div class="job-head">
                         <div>
                             <div class="job-title">{{ job.title or job.repo_url.split('/')[-1] }}</div>
                             <div class="job-url">{{ job.repo_url }}</div>
+                            {% if job.options and (job.options.subproject_name or job.options.subproject_path) %}
+                            <div class="job-url">子项目: {{ job.options.subproject_name or job.options.subproject_path }}</div>
+                            {% endif %}
                         </div>
                         <span class="badge status-{{ job.status }}">{{ job.status|upper }}</span>
                     </div>
@@ -1294,6 +1297,15 @@ ADMIN_TEMPLATE = """
                         <input type="url" id="repo_url" name="repo_url" required placeholder="https://github.com/owner/repository">
                     </div>
                     <div class="field">
+                        <label for="subproject_path">子项目目录</label>
+                        <input type="text" id="subproject_path" name="subproject_path" placeholder="例如: services/auth (空表示仓库根目录)">
+                        <small style="display:block; margin-top:6px; color:var(--muted);">同一仓库可反复提交不同子项目目录，形成多个独立文档任务。</small>
+                    </div>
+                    <div class="field">
+                        <label for="subproject_name">子项目名称</label>
+                        <input type="text" id="subproject_name" name="subproject_name" placeholder="例如: auth-service (可选)">
+                    </div>
+                    <div class="field">
                         <label for="commit_id">Commit ID</label>
                         <input type="text" id="commit_id" name="commit_id" placeholder="可选">
                     </div>
@@ -1429,10 +1441,13 @@ ADMIN_TEMPLATE = """
                     </thead>
                     <tbody id="tasksBody">
                         {% for job in jobs %}
-                        <tr data-status="{{ job.status }}" data-search="{{ (job.title or '') ~ ' ' ~ job.repo_url ~ ' ' ~ job.job_id ~ ' ' ~ (job.progress or '') }}">
+                        <tr data-status="{{ job.status }}" data-search="{{ (job.title or '') ~ ' ' ~ job.repo_url ~ ' ' ~ job.job_id ~ ' ' ~ (job.progress or '') ~ ' ' ~ ((job.options.subproject_name if job.options and job.options.subproject_name else '') ) ~ ' ' ~ ((job.options.subproject_path if job.options and job.options.subproject_path else '') ) }}">
                             <td>
                                 <div class="task-title">{{ job.title or job.repo_url }}</div>
                                 <div class="task-url">{{ job.repo_url }}</div>
+                                {% if job.options and (job.options.subproject_name or job.options.subproject_path) %}
+                                <div class="task-url">子项目: {{ job.options.subproject_name or job.options.subproject_path }}</div>
+                                {% endif %}
                             </td>
                             <td>
                                 <span class="status {{ job.status }}">{{ job.status }}</span>

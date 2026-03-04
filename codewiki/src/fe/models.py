@@ -12,6 +12,8 @@ from pydantic import BaseModel, HttpUrl
 
 class GenerationOptions(BaseModel):
     """Options for documentation generation."""
+    subproject_name: Optional[str] = None
+    subproject_path: Optional[str] = None
     output: Optional[str] = "docs/codewiki"
     create_branch: bool = False
     github_pages: bool = False
@@ -125,3 +127,6 @@ class CacheEntry:
     docs_path: str
     created_at: datetime
     last_accessed: datetime
+    cache_scope: str = ""
+    job_id: Optional[str] = None
+    title: Optional[str] = None
