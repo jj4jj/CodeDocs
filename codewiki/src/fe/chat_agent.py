@@ -9,6 +9,7 @@ and a bash tool executed in a constrained session workspace.
 from __future__ import annotations
 
 import hashlib
+import logging
 import os
 import re
 import secrets
@@ -29,6 +30,8 @@ from pydantic_ai.providers.openai import OpenAIProvider
 from codewiki.src.utils import file_manager
 from .config import WebAppConfig
 from .github_processor import GitHubRepoProcessor
+
+logger = logging.getLogger(__name__)
 
 
 def _clip_text(value: str, max_chars: int = 12_000) -> str:
@@ -63,7 +66,9 @@ class _ChatSession:
     updated_at: datetime
     sandbox_root: Path
     workspace_dir: Path
+    repo_root_dir: Optional[Path] = None
     repo_dir: Optional[Path] = None
+    subproject_path: str = ""
     temp_user: str = ""
     history: list[dict[str, str]] = field(default_factory=list)
     model_name: str = ""
@@ -288,12 +293,44 @@ class CodeWikiChatService:
         commit_id = generation.get("commit_id") if isinstance(generation, dict) else None
         return str(commit_id or "").strip()
 
-    def _resolve_job_context(self, job_id: str) -> tuple[str, Path, str]:
+    def _normalize_subproject_path(self, raw_path: str) -> str:
+        normalized = (raw_path or "").strip().replace("\\", "/")
+        while normalized.startswith("./"):
+            normalized = normalized[2:]
+        normalized = normalized.strip("/")
+        if normalized in {"", "."}:
+            return ""
+        return normalized
+
+    def _resolve_code_scope_dir(self, repo_root: Optional[Path], subproject_path: str) -> Optional[Path]:
+        if not repo_root or not repo_root.exists():
+            return repo_root
+        normalized = self._normalize_subproject_path(subproject_path)
+        if not normalized:
+            return repo_root.resolve()
+
+        try:
+            target = (repo_root / normalized).resolve()
+            if not target.is_relative_to(repo_root.resolve()):
+                logger.warning("Subproject path escapes repo root: %s", normalized)
+                return repo_root.resolve()
+            if not target.exists() or not target.is_dir():
+                logger.warning("Subproject path does not exist in cloned repo: %s", normalized)
+                return repo_root.resolve()
+            return target
+        except Exception:
+            logger.warning("Failed resolving subproject path, fallback to repo root: %s", normalized)
+            return repo_root.resolve()
+
+    def _resolve_job_context(self, job_id: str) -> tuple[str, Path, str, str]:
         job = self.background_worker.get_job_status(job_id)
         if job and job.docs_path and Path(job.docs_path).exists():
             docs_dir = Path(job.docs_path).resolve()
             commit_id = (job.commit_id or "").strip() or self._load_metadata_commit(docs_dir)
-            return job.repo_url, docs_dir, commit_id
+            subproject_path = ""
+            if job.options and getattr(job.options, "subproject_path", None):
+                subproject_path = self._normalize_subproject_path(job.options.subproject_path)
+            return job.repo_url, docs_dir, commit_id, subproject_path
 
         for entry in self.cache_manager.cache_index.values():
             if entry.job_id != job_id:
@@ -304,7 +341,8 @@ class CodeWikiChatService:
             if not docs_dir.exists():
                 continue
             commit_id = self._load_metadata_commit(docs_dir.resolve())
-            return entry.repo_url, docs_dir.resolve(), commit_id
+            # Cache entry currently does not persist subproject_path.
+            return entry.repo_url, docs_dir.resolve(), commit_id, ""
 
         raise FileNotFoundError(f"Unable to resolve job context for: {job_id}")
 
@@ -375,17 +413,18 @@ class CodeWikiChatService:
                     existing.current_page = current_page
                 return existing
 
-        repo_url, docs_dir, commit_id = self._resolve_job_context(job_id)
+        repo_url, docs_dir, commit_id, subproject_path = self._resolve_job_context(job_id)
         created_at = datetime.now()
         sandbox_root = (Path(WebAppConfig.TEMP_DIR) / "chat_sessions" / session_id).resolve()
         workspace_dir = sandbox_root / "workspace"
-        repo_dir = sandbox_root / "repo"
+        repo_root_dir = sandbox_root / "repo"
 
         if sandbox_root.exists():
             shutil.rmtree(sandbox_root, ignore_errors=True)
         workspace_dir.mkdir(parents=True, exist_ok=True)
 
-        read_only_repo = self._clone_repo_readonly(repo_url, commit_id, repo_dir)
+        read_only_repo_root = self._clone_repo_readonly(repo_url, commit_id, repo_root_dir)
+        code_scope_dir = self._resolve_code_scope_dir(read_only_repo_root, subproject_path)
         temp_user = self._create_temp_user(session_id)
         if temp_user and os.geteuid() == 0:
             subprocess.run(
@@ -407,7 +446,9 @@ class CodeWikiChatService:
             updated_at=created_at,
             sandbox_root=sandbox_root,
             workspace_dir=workspace_dir,
-            repo_dir=read_only_repo,
+            repo_root_dir=read_only_repo_root,
+            repo_dir=code_scope_dir,
+            subproject_path=subproject_path,
             temp_user=temp_user,
             model_name=model_name,
         )
@@ -530,6 +571,8 @@ class CodeWikiChatService:
         model_chain, primary_name = self._make_models()
         docs_dir = session.docs_dir.as_posix()
         repo_dir = session.repo_dir.as_posix() if session.repo_dir else "(unavailable)"
+        repo_root = session.repo_root_dir.as_posix() if session.repo_root_dir else "(unavailable)"
+        subproject = session.subproject_path or "(仓库根目录)"
         workspace_dir = session.workspace_dir.as_posix()
         system_prompt = (
             "你是 CodeWikiAgent（CodeDocAgent 运行时），非常熟悉目标代码库与其生成文档。\n"
@@ -539,7 +582,9 @@ class CodeWikiChatService:
             "3) 引用结论时给出具体相对路径与关键片段。\n\n"
             "访问边界（严格）:\n"
             f"- 仅可访问文档目录: {docs_dir}\n"
-            f"- 仅可访问代码目录: {repo_dir}\n"
+            f"- 代码仓库根目录(仅参考): {repo_root}\n"
+            f"- 本文档对应代码目录(可访问范围): {repo_dir}\n"
+            f"- 该代码目录在仓库中的子目录路径: {subproject}\n"
             f"- 命令工作目录: {workspace_dir}\n"
             "- 严禁修改任何代码/文档/权限/仓库历史。\n"
             "- 若用户要求修改，请明确拒绝并说明当前会话为只读分析模式。"
@@ -554,6 +599,78 @@ class CodeWikiChatService:
             ),
             primary_name,
         )
+
+    def _flatten_exception_messages(self, exc: BaseException, depth: int = 0) -> list[str]:
+        """Extract concise messages from nested ExceptionGroup / chained errors."""
+        if depth > 4:
+            return []
+
+        messages: list[str] = []
+        text = str(exc).strip()
+        if text:
+            messages.append(text)
+
+        # Python 3.11+ ExceptionGroup
+        sub_errors = getattr(exc, "exceptions", None)
+        if isinstance(sub_errors, tuple):
+            for sub in sub_errors:
+                messages.extend(self._flatten_exception_messages(sub, depth + 1))
+
+        cause = getattr(exc, "__cause__", None)
+        if cause is not None:
+            messages.extend(self._flatten_exception_messages(cause, depth + 1))
+
+        context = getattr(exc, "__context__", None)
+        if context is not None and context is not cause:
+            messages.extend(self._flatten_exception_messages(context, depth + 1))
+
+        dedup: list[str] = []
+        seen = set()
+        for item in messages:
+            if not item or item in seen:
+                continue
+            seen.add(item)
+            dedup.append(item)
+        return dedup
+
+    def _build_model_diagnostics(self, exc: Exception, primary_model: str) -> str:
+        """Build user-visible diagnostics for model/auth/base_url failures."""
+        model_list = [name.strip() for name in WebAppConfig.AGENT_MODEL_NAMES if name and name.strip()]
+        if not model_list:
+            model_list = [primary_model]
+        base_url = (WebAppConfig.AGENT_MODEL_BASE_URL or "").strip()
+        api_key_exists = bool((WebAppConfig.AGENT_MODEL_API_KEY or "").strip())
+        raw_msgs = self._flatten_exception_messages(exc)
+        hints = []
+        for msg in raw_msgs:
+            lowered = msg.lower()
+            if any(k in lowered for k in ["401", "unauthorized", "invalid api key", "authentication"]):
+                hints.append("可能是 AGENT_MODEL_API_KEY 不正确或无权限。")
+            if any(k in lowered for k in ["404", "not found", "model", "unsupported"]):
+                hints.append("可能是 AGENT_MODEL_NAMES 中模型名与网关不匹配。")
+            if any(k in lowered for k in ["connection", "timeout", "dns", "refused", "ssl", "certificate"]):
+                hints.append("可能是 AGENT_MODEL_BASE_URL 不可达或证书配置异常。")
+
+        unique_hints: list[str] = []
+        for hint in hints:
+            if hint not in unique_hints:
+                unique_hints.append(hint)
+
+        details = raw_msgs[:4] if raw_msgs else [str(exc)]
+        lines = [
+            "CodeWikiAgent 模型调用失败。",
+            f"- base_url: {base_url or '(empty)'}",
+            f"- api_key_provided: {'yes' if api_key_exists else 'no'}",
+            f"- models: {', '.join(model_list)}",
+            "- errors:",
+        ]
+        for item in details:
+            lines.append(f"  - {item}")
+        if unique_hints:
+            lines.append("- hints:")
+            for hint in unique_hints[:3]:
+                lines.append(f"  - {hint}")
+        return "\n".join(lines)
 
     def _format_prompt(
         self,
@@ -574,7 +691,9 @@ class CodeWikiChatService:
             f"job_id={session.job_id}",
             f"current_page={session.current_page}",
             f"docs_dir={session.docs_dir.as_posix()}",
+            f"repo_root_dir={session.repo_root_dir.as_posix() if session.repo_root_dir else '(unavailable)'}",
             f"repo_dir={session.repo_dir.as_posix() if session.repo_dir else '(unavailable)'}",
+            f"subproject_path={session.subproject_path or '(repo-root)'}",
             f"workspace_dir={session.workspace_dir.as_posix()}",
         ]
         return (
@@ -603,7 +722,12 @@ class CodeWikiChatService:
         agent, model_name = self._build_agent(session)
 
         deps = _ChatDeps(service=self, session=session)
-        result = await agent.run(prompt, deps=deps)
+        try:
+            result = await agent.run(prompt, deps=deps)
+        except Exception as exc:
+            diagnostics = self._build_model_diagnostics(exc, model_name)
+            logger.exception("CodeWikiAgent run failed. %s", diagnostics)
+            raise RuntimeError(diagnostics) from exc
         output = str(result.output).strip()
         if not output:
             output = "No answer generated."
