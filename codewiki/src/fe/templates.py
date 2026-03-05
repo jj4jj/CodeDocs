@@ -751,6 +751,9 @@ DOCS_VIEW_TEMPLATE = _inject_shared_tokens("""
     <script src="https://cdn.jsdelivr.net/npm/mermaid@11.9.0/dist/mermaid.min.js"></script>
     <style>
 __CW_SHARED_UI_TOKENS__
+        :root {
+            --chat-panel-width: min(1080px, 86vw);
+        }
         body {
             font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
             color: var(--text);
@@ -775,19 +778,65 @@ __CW_SHARED_UI_TOKENS__
         .content {
             flex: 1;
             margin-left: 308px;
-            margin-right: 360px;
+            margin-right: 0;
             padding: 28px 38px;
             min-width: 0;
+            transition: margin-right 0.22s ease;
+        }
+
+        body.chat-open .content {
+            margin-right: var(--chat-panel-width);
         }
 
         .chat-panel {
-            width: 360px;
+            width: var(--chat-panel-width);
             border-left: 1px solid var(--line);
             background: var(--surface);
             position: fixed;
             inset: 0 0 0 auto;
             display: flex;
             flex-direction: column;
+            transform: translateX(100%);
+            transition: transform 0.22s ease;
+            z-index: 120;
+        }
+
+        body.chat-open .chat-panel {
+            transform: translateX(0);
+        }
+
+        .chat-drawer-toggle {
+            position: fixed;
+            right: 12px;
+            top: 50%;
+            transform: translateY(-50%);
+            width: 44px;
+            height: 44px;
+            border: 1px solid var(--line-strong);
+            background: var(--surface);
+            color: var(--primary);
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: var(--radius-sm);
+            box-shadow: var(--shadow);
+            cursor: pointer;
+            z-index: 125;
+            transition: right 0.22s ease, background 0.14s ease, color 0.14s ease, border-color 0.14s ease;
+        }
+
+        .chat-drawer-toggle:hover {
+            background: var(--primary-soft);
+            border-color: var(--primary);
+        }
+
+        .chat-drawer-toggle svg {
+            width: 20px;
+            height: 20px;
+        }
+
+        body.chat-open .chat-drawer-toggle {
+            right: calc(var(--chat-panel-width) + 12px);
         }
 
         .chat-header {
@@ -1118,13 +1167,18 @@ __CW_SHARED_UI_TOKENS__
             overflow-x: auto;
         }
 
+        @media (max-width: 1580px) {
+            :root {
+                --chat-panel-width: min(920px, 84vw);
+            }
+        }
+
         @media (max-width: 1320px) {
-            .chat-panel {
-                width: 320px;
+            :root {
+                --chat-panel-width: min(760px, 88vw);
             }
 
             .content {
-                margin-right: 320px;
                 padding: 22px 24px;
             }
         }
@@ -1142,15 +1196,35 @@ __CW_SHARED_UI_TOKENS__
                 padding: 16px;
             }
 
+            body.chat-open .content {
+                margin-right: 0;
+            }
+
             .chat-panel {
-                width: auto;
-                position: relative;
-                border-left: none;
-                border-top: 1px solid var(--line);
+                width: min(100vw, 100%);
+                border-left: 1px solid var(--line);
+                transform: translateX(100%);
+                z-index: 130;
+            }
+
+            body.chat-open .chat-panel {
+                transform: translateX(0);
             }
 
             .chat-messages {
                 max-height: 260px;
+            }
+
+            .chat-drawer-toggle {
+                top: auto;
+                bottom: 14px;
+                transform: none;
+                right: 12px;
+            }
+
+            body.chat-open .chat-drawer-toggle {
+                right: 12px;
+                bottom: 14px;
             }
 
             .docs-shell {
@@ -1272,6 +1346,21 @@ __CW_SHARED_UI_TOKENS__
             </div>
         </main>
 
+        <button
+            id="chatDrawerToggle"
+            class="chat-drawer-toggle"
+            type="button"
+            title="打开聊天助手"
+            aria-label="打开聊天助手"
+            aria-expanded="false"
+        >
+            <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <rect x="5" y="3.8" width="14" height="11.8" rx="2.2" stroke="currentColor" stroke-width="1.7"/>
+                <path d="M8.4 8.4h7.2M8.4 11.2h5.2" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/>
+                <path d="M9 16.2l-2.6 3 .6-2.9h-.8a1.2 1.2 0 0 1-1.2-1.2v-1" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+        </button>
+
         <aside class="chat-panel" data-chat-api="{{ chat_api_url }}" data-chat-protocol="{{ chat_protocol }}">
             <div class="chat-header">
                 <div class="chat-title">CodeWikiAgent</div>
@@ -1377,12 +1466,42 @@ __CW_SHARED_UI_TOKENS__
             }
 
             const chatPanel = document.querySelector('.chat-panel');
+            const chatDrawerToggle = document.getElementById('chatDrawerToggle');
             const chatMessagesEl = document.getElementById('chatMessages');
             const chatInputEl = document.getElementById('chatInput');
             const chatSendBtn = document.getElementById('chatSendBtn');
             const chatHistory = [];
             const chatSessionKey = 'cw_chat_session_{{ job_id }}';
+            const chatDrawerKey = 'cw_chat_drawer_{{ job_id }}';
             let chatSessionId = window.sessionStorage.getItem(chatSessionKey) || '';
+
+            const setDrawerState = (isOpen) => {
+                document.body.classList.toggle('chat-open', Boolean(isOpen));
+                if (chatDrawerToggle) {
+                    chatDrawerToggle.setAttribute('aria-expanded', isOpen ? 'true' : 'false');
+                    chatDrawerToggle.setAttribute('title', isOpen ? '收起聊天助手' : '打开聊天助手');
+                    chatDrawerToggle.setAttribute('aria-label', isOpen ? '收起聊天助手' : '打开聊天助手');
+                }
+                try {
+                    window.localStorage.setItem(chatDrawerKey, isOpen ? '1' : '0');
+                } catch (e) {
+                    // ignore storage errors
+                }
+            };
+
+            if (chatDrawerToggle) {
+                chatDrawerToggle.addEventListener('click', function() {
+                    const open = document.body.classList.contains('chat-open');
+                    setDrawerState(!open);
+                });
+            }
+
+            try {
+                const storedDrawerState = window.localStorage.getItem(chatDrawerKey);
+                setDrawerState(storedDrawerState === '1');
+            } catch (e) {
+                setDrawerState(false);
+            }
 
             const appendBubble = (role, text) => {
                 if (!chatMessagesEl) return;
@@ -2244,7 +2363,34 @@ __CW_SHARED_UI_LAYOUT__
                     </thead>
                     <tbody id="tasksBody">
                         {% for job in jobs %}
-                        <tr data-status="{{ job.status }}" data-search="{{ (job.title or '') ~ ' ' ~ job.repo_url ~ ' ' ~ job.job_id ~ ' ' ~ (job.progress or '') ~ ' ' ~ ((job.options.subproject_name if job.options and job.options.subproject_name else '') ) ~ ' ' ~ ((job.options.subproject_path if job.options and job.options.subproject_path else '') ) }}">
+                        <tr
+                            data-job-id="{{ job.job_id }}"
+                            data-status="{{ job.status }}"
+                            data-search="{{ (job.title or '') ~ ' ' ~ job.repo_url ~ ' ' ~ job.job_id ~ ' ' ~ (job.progress or '') ~ ' ' ~ ((job.options.subproject_name if job.options and job.options.subproject_name else '') ) ~ ' ' ~ ((job.options.subproject_path if job.options and job.options.subproject_path else '') ) }}"
+                            data-repo-url="{{ job.repo_url }}"
+                            data-commit-id="{{ job.commit_id or '' }}"
+                            data-priority="{{ job.priority }}"
+                            data-subproject-name="{{ job.options.subproject_name if job.options and job.options.subproject_name else '' }}"
+                            data-subproject-path="{{ job.options.subproject_path if job.options and job.options.subproject_path else '' }}"
+                            data-output="{{ job.options.output if job.options and job.options.output else 'docs/codewiki' }}"
+                            data-create-branch="{{ 'true' if job.options and job.options.create_branch else 'false' }}"
+                            data-github-pages="{{ 'true' if job.options and job.options.github_pages else 'false' }}"
+                            data-no-cache="{{ 'true' if job.options and job.options.no_cache else 'false' }}"
+                            data-include="{{ job.options.include if job.options and job.options.include else '' }}"
+                            data-exclude="{{ job.options.exclude if job.options and job.options.exclude else '' }}"
+                            data-focus="{{ job.options.focus if job.options and job.options.focus else '' }}"
+                            data-doc-type="{{ job.options.doc_type if job.options and job.options.doc_type else '' }}"
+                            data-instructions="{{ job.options.instructions if job.options and job.options.instructions else '' }}"
+                            data-skills="{{ job.options.skills if job.options and job.options.skills else '' }}"
+                            data-max-tokens="{{ job.options.max_tokens if job.options and job.options.max_tokens is not none else '' }}"
+                            data-max-token-per-module="{{ job.options.max_token_per_module if job.options and job.options.max_token_per_module is not none else '' }}"
+                            data-max-token-per-leaf-module="{{ job.options.max_token_per_leaf_module if job.options and job.options.max_token_per_leaf_module is not none else '' }}"
+                            data-max-depth="{{ job.options.max_depth if job.options and job.options.max_depth is not none else '' }}"
+                            data-output-lang="{{ job.options.output_lang if job.options and job.options.output_lang else '' }}"
+                            data-agent-cmd="{{ job.options.agent_cmd if job.options and job.options.agent_cmd else '' }}"
+                            data-custom-cli-args="{{ job.options.custom_cli_args if job.options and job.options.custom_cli_args else '' }}"
+                            data-concurrency="{{ job.options.concurrency if job.options and job.options.concurrency is not none else 4 }}"
+                        >
                             <td>
                                 <div class="task-title">{{ job.title or job.repo_url }}</div>
                                 <div class="task-url">{{ job.repo_url }}</div>
@@ -2279,7 +2425,7 @@ __CW_SHARED_UI_LAYOUT__
                                     {% endif %}
                                     {% if job.status in ['completed', 'failed', 'stopped'] %}
                                     <button class="btn" onclick="openTaskLog('{{ job.job_id }}', false)" title="查看日志">日志</button>
-                                    <button class="btn" onclick="regenerateTask('{{ job.job_id }}')" title="重新生成">重新生成</button>
+                                    <button class="btn" onclick="regenerateTask('{{ job.job_id }}')" title="载入原参数到创建任务">重新生成</button>
                                     {% endif %}
                                     {% if job.status != 'processing' %}
                                     <button class="btn btn-danger" onclick="deleteTask('{{ job.job_id }}')" title="删除">删除</button>
@@ -2441,6 +2587,7 @@ __CW_SHARED_UI_LAYOUT__
             }
 
             setActivePanel(initialPanelId || "panel-create", { persist: false, updateHash: Boolean(hash) });
+            window.setAdminPanel = (panelId) => setActivePanel(panelId, { persist: true, updateHash: true });
 
             navButtons.forEach((button) => {
                 button.addEventListener("click", () => {
@@ -2533,21 +2680,70 @@ __CW_SHARED_UI_LAYOUT__
             }
         }
 
-        async function regenerateTask(jobId) {
-            if (!confirm("确定为该任务重新生成文档吗？将创建新的版本目录。")) {
+        function _setFormValue(form, name, value) {
+            const input = form.querySelector(`[name="${name}"]`);
+            if (!input) return;
+            input.value = value ?? "";
+        }
+
+        function _setFormCheckbox(form, name, value) {
+            const input = form.querySelector(`[name="${name}"]`);
+            if (!input) return;
+            const normalized = String(value || "").toLowerCase();
+            input.checked = normalized === "true" || normalized === "1" || normalized === "yes";
+        }
+
+        function regenerateTask(jobId) {
+            const row = document.querySelector(`#tasksBody tr[data-job-id="${jobId}"]`);
+            const form = document.querySelector('form[action="/admin"]');
+            if (!row || !form) {
+                alert("无法载入任务参数，请刷新页面后重试。");
                 return;
             }
-            try {
-                const response = await fetch(`/api/tasks/${jobId}/regenerate`, { method: "POST" });
-                if (response.ok) {
-                    window.location.reload();
-                } else {
-                    const data = await response.json();
-                    alert("重新生成失败: " + (data.detail || "未知错误"));
-                }
-            } catch (error) {
-                alert("重新生成出错: " + error.message);
+
+            const data = row.dataset || {};
+            _setFormValue(form, "repo_url", data.repoUrl || "");
+            _setFormValue(form, "commit_id", data.commitId || "");
+            _setFormValue(form, "subproject_name", data.subprojectName || "");
+            _setFormValue(form, "subproject_path", data.subprojectPath || "");
+            _setFormValue(form, "priority", data.priority || "0");
+            _setFormValue(form, "output", data.output || "docs/codewiki");
+            _setFormValue(form, "include", data.include || "");
+            _setFormValue(form, "exclude", data.exclude || "");
+            _setFormValue(form, "focus", data.focus || "");
+            _setFormValue(form, "doc_type", data.docType || "");
+            _setFormValue(form, "instructions", data.instructions || "");
+            _setFormValue(form, "skills", data.skills || "");
+            _setFormValue(form, "max_tokens", data.maxTokens || "");
+            _setFormValue(form, "max_token_per_module", data.maxTokenPerModule || "");
+            _setFormValue(form, "max_token_per_leaf_module", data.maxTokenPerLeafModule || "");
+            _setFormValue(form, "max_depth", data.maxDepth || "");
+            _setFormValue(form, "output_lang", data.outputLang || "");
+            _setFormValue(form, "agent_cmd", data.agentCmd || "");
+            _setFormValue(form, "custom_cli_args", data.customCliArgs || "");
+            _setFormValue(form, "concurrency", data.concurrency || "4");
+
+            _setFormCheckbox(form, "create_branch", data.createBranch);
+            _setFormCheckbox(form, "github_pages", data.githubPages);
+            _setFormCheckbox(form, "no_cache", data.noCache);
+
+            const advanced = form.querySelector(".options-details");
+            if (advanced) advanced.open = true;
+
+            if (typeof window.setAdminPanel === "function") {
+                window.setAdminPanel("panel-create");
+            } else {
+                window.location.hash = "#create";
             }
+
+            const repoInput = form.querySelector('[name="repo_url"]');
+            if (repoInput) {
+                repoInput.focus();
+                repoInput.scrollIntoView({ behavior: "smooth", block: "center" });
+            }
+
+            saveAdvancedOptions();
+            alert("已载入原任务参数，请确认后手动提交任务。");
         }
 
         async function stopTask(jobId) {
