@@ -330,6 +330,8 @@ class WebRoutes:
             if selected_lang:
                 query_params["lang"] = selected_lang
             query_suffix = f"?{urlencode(query_params)}" if query_params else ""
+            view_options = self._collect_doc_type_views(job, job_id)
+            current_doc_type = self._extract_doc_type(job, job_id)
 
             context = {
                 "repo_name": repo_url.split("/")[-1],
@@ -345,6 +347,10 @@ class WebRoutes:
                 "languages": available_languages,
                 "current_lang": selected_lang,
                 "query_suffix": query_suffix,
+                "docs_home_url": "/",
+                "view_options": view_options,
+                "current_view_job_id": job_id,
+                "current_doc_type": current_doc_type,
             }
             
             return HTMLResponse(content=render_template(DOCS_VIEW_TEMPLATE, context))
@@ -403,18 +409,46 @@ class WebRoutes:
         full_name: str,
         subproject_name: str = "",
         subproject_path: str = "",
+        doc_type: str = "",
     ) -> str:
-        """Convert repo + optional subproject into URL-safe job ID."""
-        base_id = full_name.replace('/', '--')
+        """Convert repo + optional subproject/doc_type into URL-safe job ID."""
+        base_id = full_name.replace("/", "--")
         sub_key = self._subproject_key(subproject_name, subproject_path)
-        if not sub_key:
-            return base_id
-        return f"{base_id}__sp__{sub_key}"
+        doc_key = self._sanitize_job_segment(normalize_doc_type_name(doc_type))
+        parts = [base_id]
+        if sub_key:
+            parts.append(f"__sp__{sub_key}")
+        if doc_key:
+            parts.append(f"__dt__{doc_key}")
+        return "".join(parts)
+
+    def _parse_job_id_variants(self, job_id: str):
+        """Split job_id into base/subproject/doc_type segments."""
+        base = job_id
+        sub_key = ""
+        doc_key = ""
+        if "__sp__" in base:
+            base, rest = base.split("__sp__", 1)
+            if "__dt__" in rest:
+                sub_key, doc_key = rest.split("__dt__", 1)
+            else:
+                sub_key = rest
+            return base, sub_key, doc_key
+        if "__dt__" in base:
+            base, doc_key = base.split("__dt__", 1)
+        return base, sub_key, doc_key
 
     def _job_id_to_repo_full_name(self, job_id: str) -> str:
         """Convert job ID back to repo full name."""
-        base_id = job_id.split("__sp__", 1)[0]
+        base_id, _, _ = self._parse_job_id_variants(job_id)
         return base_id.replace('--', '/')
+
+    def _extract_doc_type(self, job: JobStatus = None, job_id: str = "") -> str:
+        """Get doc_type from job options or job_id suffix."""
+        if job and job.options and job.options.doc_type:
+            return normalize_doc_type_name(job.options.doc_type)
+        _, _, doc_key = self._parse_job_id_variants(job_id)
+        return normalize_doc_type_name(doc_key)
 
     def _job_cache_scope(self, job_id: str) -> str:
         """Cache scope for a job variant (repo root or subproject)."""
@@ -588,6 +622,70 @@ class WebRoutes:
                 title = stem.replace("_", " ").replace("-", " ").title()
             nav_items.append({"path": rel_path, "title": title})
         return nav_items
+
+    def _collect_doc_type_views(self, current_job: JobStatus, current_job_id: str):
+        """Collect available doc-type views for same repo/subproject."""
+        if not current_job:
+            return [{
+                "job_id": current_job_id,
+                "doc_type": self._extract_doc_type(job_id=current_job_id),
+                "label": "默认视图",
+            }]
+
+        if not current_job.repo_url:
+            current_doc_type = self._extract_doc_type(current_job, current_job_id)
+            return [{
+                "job_id": current_job_id,
+                "doc_type": current_doc_type,
+                "label": current_doc_type or "默认视图",
+            }]
+
+        target_repo = self._normalize_github_url(current_job.repo_url)
+        target_sub_key = self._subproject_key(
+            current_job.options.subproject_name if current_job.options else "",
+            current_job.options.subproject_path if current_job.options else "",
+        )
+        if not target_sub_key:
+            _, target_sub_key, _ = self._parse_job_id_variants(current_job_id)
+
+        options = {}
+        all_jobs = self.background_worker.get_all_jobs()
+        for candidate in all_jobs.values():
+            if candidate.status != "completed" or not candidate.docs_path:
+                continue
+            if self._normalize_github_url(candidate.repo_url) != target_repo:
+                continue
+            if not Path(candidate.docs_path).exists():
+                continue
+
+            sub_key = self._subproject_key(
+                candidate.options.subproject_name if candidate.options else "",
+                candidate.options.subproject_path if candidate.options else "",
+            )
+            if not sub_key:
+                _, sub_key, _ = self._parse_job_id_variants(candidate.job_id)
+            if sub_key != target_sub_key:
+                continue
+
+            doc_type = self._extract_doc_type(candidate, candidate.job_id)
+            label = doc_type if doc_type else "默认视图"
+            options[candidate.job_id] = {
+                "job_id": candidate.job_id,
+                "doc_type": doc_type,
+                "label": label,
+            }
+
+        if current_job_id not in options:
+            current_doc_type = self._extract_doc_type(current_job, current_job_id)
+            options[current_job_id] = {
+                "job_id": current_job_id,
+                "doc_type": current_doc_type,
+                "label": current_doc_type or "默认视图",
+            }
+
+        items = list(options.values())
+        items.sort(key=lambda x: (0 if x["job_id"] == current_job_id else 1, x["label"]))
+        return items
     
     def cleanup_old_jobs(self):
         """Clean up old job status entries."""
@@ -712,6 +810,7 @@ class WebRoutes:
         repo_info = GitHubRepoProcessor.get_repo_info(normalized_repo_url)
         normalized_subproject_path = self._normalize_subproject_path(subproject_path)
         normalized_subproject_name = (subproject_name or "").strip()
+        normalized_doc_type = normalize_doc_type_name(doc_type)
         if normalized_subproject_path and (
             normalized_subproject_path == ".."
             or normalized_subproject_path.startswith("../")
@@ -722,6 +821,7 @@ class WebRoutes:
             repo_info['full_name'],
             subproject_name=normalized_subproject_name,
             subproject_path=normalized_subproject_path,
+            doc_type=normalized_doc_type,
         )
         title = GitHubRepoProcessor.generate_title(normalized_repo_url)
         subproject_label = self._subproject_label(
@@ -730,6 +830,8 @@ class WebRoutes:
         )
         if subproject_label:
             title = f"{title} [{subproject_label}]"
+        if normalized_doc_type:
+            title = f"{title} <{normalized_doc_type}>"
         
         options = GenerationOptions(
             subproject_name=normalized_subproject_name or None,
@@ -741,7 +843,7 @@ class WebRoutes:
             include=include.strip() if include and include.strip() else None,
             exclude=exclude.strip() if exclude and exclude.strip() else None,
             focus=focus.strip() if focus and focus.strip() else None,
-            doc_type=doc_type.strip() if doc_type and doc_type.strip() else None,
+            doc_type=normalized_doc_type or None,
             instructions=instructions.strip() if instructions and instructions.strip() else None,
             skills=skills.strip() if skills and skills.strip() else None,
             max_tokens=int(max_tokens) if max_tokens and max_tokens.isdigit() else None,
@@ -778,6 +880,7 @@ class WebRoutes:
             "repo_url": normalized_repo_url,
             "subproject_name": normalized_subproject_name,
             "subproject_path": normalized_subproject_path,
+            "doc_type": normalized_doc_type,
             "status": "queued",
             "message": "Task created successfully"
         })
@@ -979,6 +1082,7 @@ class WebRoutes:
         repo_info = GitHubRepoProcessor.get_repo_info(normalized_repo_url)
         normalized_subproject_path = self._normalize_subproject_path(subproject_path)
         normalized_subproject_name = (subproject_name or "").strip()
+        normalized_doc_type = normalize_doc_type_name(doc_type)
         if normalized_subproject_path and (
             normalized_subproject_path == ".."
             or normalized_subproject_path.startswith("../")
@@ -990,6 +1094,7 @@ class WebRoutes:
             repo_info['full_name'],
             subproject_name=normalized_subproject_name,
             subproject_path=normalized_subproject_path,
+            doc_type=normalized_doc_type,
         )
         title = GitHubRepoProcessor.generate_title(normalized_repo_url)
         subproject_label = self._subproject_label(
@@ -998,6 +1103,8 @@ class WebRoutes:
         )
         if subproject_label:
             title = f"{title} [{subproject_label}]"
+        if normalized_doc_type:
+            title = f"{title} <{normalized_doc_type}>"
 
         options = GenerationOptions(
             subproject_name=normalized_subproject_name or None,
@@ -1009,7 +1116,7 @@ class WebRoutes:
             include=include.strip() if include and include.strip() else None,
             exclude=exclude.strip() if exclude and exclude.strip() else None,
             focus=focus.strip() if focus and focus.strip() else None,
-            doc_type=doc_type.strip() if doc_type and doc_type.strip() else None,
+            doc_type=normalized_doc_type or None,
             instructions=instructions.strip() if instructions and instructions.strip() else None,
             skills=skills.strip() if skills and skills.strip() else None,
             max_tokens=int(max_tokens) if max_tokens and max_tokens.isdigit() else None,

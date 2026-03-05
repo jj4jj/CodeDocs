@@ -47,8 +47,8 @@ def initialize_globals():
             # The FastAPI endpoints will need to check if DOCS_FOLDER is None
             pass
 
-# Markdown parser
-md = MarkdownIt()
+# Markdown parser (enable GFM-like tables explicitly)
+md = MarkdownIt("commonmark").enable(["table"])
 
 
 def load_module_tree(docs_folder: Path) -> Optional[Dict]:

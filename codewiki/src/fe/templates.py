@@ -451,8 +451,25 @@ DOCS_VIEW_TEMPLATE = """
             font-size: 24px;
             font-weight: bold;
             color: var(--primary-color);
-            margin-bottom: 30px;
+            margin-bottom: 12px;
             text-decoration: none;
+            display: block;
+        }
+
+        .home-link {
+            display: inline-block;
+            font-size: 12px;
+            color: #64748b;
+            text-decoration: none;
+            margin-bottom: 14px;
+            border: 1px solid #d8e2ee;
+            border-radius: 999px;
+            padding: 4px 10px;
+        }
+
+        .home-link:hover {
+            color: var(--primary-color);
+            background: #f8fafc;
         }
         
         .nav-section {
@@ -605,6 +622,9 @@ DOCS_VIEW_TEMPLATE = """
             width: 100%;
             border-collapse: collapse;
             margin-bottom: 1rem;
+            display: block;
+            overflow-x: auto;
+            white-space: nowrap;
         }
         
         .markdown-content th, .markdown-content td {
@@ -646,6 +666,7 @@ DOCS_VIEW_TEMPLATE = """
     <div class="container">
         <nav class="sidebar">
             <a href="/static-docs/{{ job_id }}/overview.md{{ query_suffix }}" class="logo">📚 {{ repo_name }}</a>
+            <a href="{{ docs_home_url or '/' }}" class="home-link">← 返回文档中心</a>
             
             {% if metadata and metadata.generation_info %}
             <div style="margin: 20px 0; padding: 15px; background: #f8fafc; border-radius: 8px; border: 1px solid #e2e8f0;">
@@ -682,6 +703,21 @@ DOCS_VIEW_TEMPLATE = """
                     <option value="{{ lang_item.id }}" {% if current_lang == lang_item.id %}selected{% endif %}>{{ lang_item.label }}</option>
                     {% endfor %}
                 </select>
+            </div>
+            {% endif %}
+
+            {% if view_options and view_options|length > 1 %}
+            <div style="margin: 12px 0 20px 0;">
+                <label for="viewSelect" style="display:block; font-size:12px; color:#64748b; margin-bottom:6px; text-transform:uppercase; letter-spacing:0.05em;">视图</label>
+                <select id="viewSelect" style="width:100%; padding:8px 10px; border:1px solid #c9d5e3; border-radius:6px; font-size:13px; background:#fff;">
+                    {% for v in view_options %}
+                    <option value="{{ v.job_id }}" {% if current_view_job_id == v.job_id %}selected{% endif %}>{{ v.label }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            {% elif current_doc_type %}
+            <div style="margin: 12px 0 20px 0; font-size:12px; color:#64748b;">
+                视图: <strong style="color:#334155;">{{ current_doc_type }}</strong>
             </div>
             {% endif %}
             
@@ -810,6 +846,16 @@ DOCS_VIEW_TEMPLATE = """
             if (languageSelect) {
                 languageSelect.addEventListener('change', function() {
                     window.location.href = '/static-docs/{{ job_id }}/{{ current_page }}' + buildQuery();
+                });
+            }
+            const viewSelect = document.getElementById('viewSelect');
+            if (viewSelect) {
+                viewSelect.addEventListener('change', function() {
+                    const targetJobId = viewSelect.value || '{{ job_id }}';
+                    const params = new URLSearchParams(window.location.search);
+                    params.delete('version');
+                    const query = params.toString();
+                    window.location.href = '/static-docs/' + targetJobId + '/overview.md' + (query ? ('?' + query) : '');
                 });
             }
             mermaid.init(undefined, document.querySelectorAll('.mermaid'));
