@@ -1481,8 +1481,13 @@ class WebRoutes:
         
         self.background_worker.set_job_status(job_id, job)
         self.background_worker.save_job_statuses()
-        
-        return await self.admin_get(request)
+
+        context = self._build_admin_context(
+            message="任务已创建并加入队列",
+            message_type="success",
+            active_panel="panel-stats",
+        )
+        return HTMLResponse(content=render_template(ADMIN_TEMPLATE, context))
 
     async def admin_doc_type_post(
         self,
@@ -1601,6 +1606,7 @@ class WebRoutes:
         error: str = None,
         message: str = None,
         message_type: str = None,
+        active_panel: str = None,
     ):
         all_jobs = self.background_worker.get_all_jobs()
         jobs_list = sorted(all_jobs.values(), key=lambda x: x.created_at, reverse=True)
@@ -1626,6 +1632,7 @@ class WebRoutes:
             "agent_base_url": WebAppConfig.AGENT_MODEL_BASE_URL,
             "agent_models": ", ".join(WebAppConfig.AGENT_MODEL_NAMES),
             "agent_api_key_set": bool(WebAppConfig.AGENT_MODEL_API_KEY),
+            "active_panel": active_panel or "",
         }
 
     def _new_client_id(self) -> str:

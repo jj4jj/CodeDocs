@@ -3086,6 +3086,22 @@ __CW_SHARED_UI_LAYOUT__
             min-width: 0;
         }
 
+        .input-with-action {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .input-with-action input {
+            flex: 1;
+            min-width: 0;
+        }
+
+        .input-with-action .btn {
+            flex: 0 0 auto;
+            white-space: nowrap;
+        }
+
         .table-wrap {
             overflow: auto;
             border: 1px solid var(--line);
@@ -3543,7 +3559,10 @@ __CW_SHARED_UI_LAYOUT__
                             </div>
                             <div class="field">
                                 <label for="output">输出目录</label>
-                                <input type="text" id="output" name="output" placeholder="docs/codewiki">
+                                <div class="input-with-action">
+                                    <input type="text" id="output" name="output" placeholder="docs/codewiki">
+                                    <button class="btn" type="button" id="generateOutputPathBtn">生成</button>
+                                </div>
                             </div>
                             <div class="field">
                                 <label for="max_depth">最大深度</label>
@@ -4062,6 +4081,104 @@ __CW_SHARED_UI_LAYOUT__
             input.checked = normalized === "true" || normalized === "1" || normalized === "yes";
         }
 
+        function _normalizeSubprojectPath(path) {
+            let value = String(path || "").trim().replace(/\\/g, "/");
+            while (value.startsWith("./")) value = value.slice(2);
+            value = value.replace(/^\/+|\/+$/g, "");
+            if (value === "." || value === "") return "";
+            return value;
+        }
+
+        function _sanitizeJobSegment(value) {
+            return String(value || "")
+                .trim()
+                .replace(/[^a-zA-Z0-9._-]+/g, "-")
+                .replace(/-{2,}/g, "-")
+                .replace(/^-+|-+$/g, "")
+                .slice(0, 80);
+        }
+
+        function _normalizeDocType(value) {
+            return _sanitizeJobSegment(String(value || "").trim().toLowerCase());
+        }
+
+        function _parseRepoFullName(repoUrl) {
+            const raw = String(repoUrl || "").trim();
+            if (!raw) return "";
+
+            if (raw.startsWith("ssh://")) {
+                try {
+                    const u = new URL(raw);
+                    const path = String(u.pathname || "").replace(/^\/+/, "").replace(/\.git$/i, "");
+                    const parts = path.split("/").filter(Boolean);
+                    if (parts.length >= 2) return `${parts[0]}/${parts[1]}`;
+                } catch (e) {
+                    return "";
+                }
+            }
+
+            if (raw.includes("@") && raw.includes(":") && !/^https?:\/\//i.test(raw)) {
+                const idx = raw.indexOf(":");
+                if (idx > -1) {
+                    const path = raw.slice(idx + 1).replace(/^\/+/, "").replace(/\.git$/i, "");
+                    const parts = path.split("/").filter(Boolean);
+                    if (parts.length >= 2) return `${parts[0]}/${parts[1]}`;
+                }
+            }
+
+            try {
+                const u = new URL(raw);
+                const path = String(u.pathname || "").replace(/^\/+/, "").replace(/\.git$/i, "");
+                const parts = path.split("/").filter(Boolean);
+                if (parts.length >= 2) return `${parts[0]}/${parts[1]}`;
+            } catch (e) {
+                return "";
+            }
+            return "";
+        }
+
+        function _buildJobIdFromForm(form) {
+            const repoUrl = form.querySelector('[name="repo_url"]')?.value || "";
+            const repoFullName = _parseRepoFullName(repoUrl);
+            if (!repoFullName) return "";
+
+            const baseId = repoFullName.replace("/", "--");
+            const subprojectName = form.querySelector('[name="subproject_name"]')?.value || "";
+            const subprojectPathRaw = form.querySelector('[name="subproject_path"]')?.value || "";
+            const subprojectPath = _normalizeSubprojectPath(subprojectPathRaw);
+            const safeSubName = _sanitizeJobSegment(subprojectName);
+            const safeSubPath = _sanitizeJobSegment(subprojectPath.replace(/\//g, "__"));
+            const subKey = safeSubName || safeSubPath;
+
+            const docTypeRaw = form.querySelector('[name="doc_type"]')?.value || "";
+            const docKey = _normalizeDocType(docTypeRaw);
+
+            let jobId = baseId;
+            if (subKey) jobId += `__sp__${subKey}`;
+            if (docKey) jobId += `__dt__${docKey}`;
+            return jobId;
+        }
+
+        function _buildVersionStamp() {
+            const d = new Date();
+            const pad = (n) => String(n).padStart(2, "0");
+            const yy = String(d.getFullYear()).slice(-2);
+            return `${yy}${pad(d.getMonth() + 1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`;
+        }
+
+        function generateOutputPath(form) {
+            if (!form) return;
+            const outputInput = form.querySelector('[name="output"]');
+            if (!outputInput) return;
+
+            const jobId = _buildJobIdFromForm(form);
+            if (!jobId) {
+                outputInput.value = "docs/codewiki";
+                return;
+            }
+            outputInput.value = `output/docs/${jobId}/${_buildVersionStamp()}`;
+        }
+
         function regenerateTask(jobId) {
             const row = document.querySelector(`#tasksBody tr[data-job-id="${jobId}"]`);
             const form = document.querySelector('form[action="/admin"]');
@@ -4112,7 +4229,6 @@ __CW_SHARED_UI_LAYOUT__
             }
 
             saveAdvancedOptions();
-            alert("已载入原任务参数，请确认后手动提交任务。");
         }
 
         async function stopTask(jobId) {
@@ -4143,7 +4259,17 @@ __CW_SHARED_UI_LAYOUT__
             loadAdvancedOptions();
             wireAdvancedOptionsPersistence();
             wireAdminPanels();
+            const forcePanelFromServer = {{ (active_panel or "")|tojson }};
+            if (forcePanelFromServer && typeof window.setAdminPanel === "function") {
+                window.setAdminPanel(forcePanelFromServer);
+            }
             wireTaskFilters();
+
+            const createTaskForm = document.querySelector('form[action="/admin"]');
+            const generateOutputBtn = document.getElementById("generateOutputPathBtn");
+            if (createTaskForm && generateOutputBtn) {
+                generateOutputBtn.addEventListener("click", () => generateOutputPath(createTaskForm));
+            }
 
             const refreshBtn = document.getElementById("adminRefresh");
             if (refreshBtn) {
