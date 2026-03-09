@@ -368,8 +368,9 @@ class WebRoutes:
             if selected_lang:
                 query_params["lang"] = selected_lang
             query_suffix = f"?{urlencode(query_params)}" if query_params else ""
-            view_options = self._collect_doc_type_views(job, job_id)
-            current_doc_type = self._extract_doc_type(job, job_id)
+            variant_options = self._collect_repo_variant_options(job, job_id)
+            view_options = variant_options.get("view_options", [])
+            current_doc_type = variant_options.get("current_doc_type", "")
             content_frame_url = f"/static-docs-content/{job_id}/{filename}{query_suffix}"
             docs_display_title = ""
             try:
@@ -377,22 +378,6 @@ class WebRoutes:
                 docs_display_title = repo_info.get("full_name", "") or ""
             except Exception:
                 docs_display_title = (repo_url or "").strip()
-
-            subproject_label = ""
-            if job and job.options:
-                subproject_label = self._subproject_label(
-                    job.options.subproject_name or "",
-                    job.options.subproject_path or "",
-                )
-            if not subproject_label:
-                _, sub_key, _ = self._parse_job_id_variants(job_id)
-                if sub_key:
-                    subproject_label = sub_key.replace("__", "/")
-            if docs_display_title:
-                if subproject_label:
-                    docs_display_title = f"{docs_display_title} | 子项目: {subproject_label}"
-            elif subproject_label:
-                docs_display_title = f"子项目: {subproject_label}"
 
             context = {
                 "repo_name": repo_url.split("/")[-1],
@@ -411,7 +396,11 @@ class WebRoutes:
                 "query_suffix": query_suffix,
                 "docs_home_url": "/",
                 "view_options": view_options,
-                "current_view_job_id": job_id,
+                "view_matrix": variant_options.get("view_matrix", {}),
+                "subproject_options": variant_options.get("subproject_options", []),
+                "current_subproject_key": variant_options.get("current_subproject_key", ""),
+                "current_subproject_label": variant_options.get("current_subproject_label", ""),
+                "current_view_job_id": variant_options.get("current_view_job_id", job_id),
                 "current_doc_type": current_doc_type,
                 "chat_api_url": f"/api/docs/{job_id}/chat",
                 "chat_protocol": "a2ui-0.1",
@@ -808,68 +797,151 @@ class WebRoutes:
         return None
 
     def _collect_doc_type_views(self, current_job: JobStatus, current_job_id: str):
-        """Collect available doc-type views for same repo/subproject."""
-        if not current_job:
-            return [{
-                "job_id": current_job_id,
-                "doc_type": self._extract_doc_type(job_id=current_job_id),
-                "label": "默认视图",
-            }]
+        """Backward-compatible doc-view list for current subproject."""
+        return self._collect_repo_variant_options(current_job, current_job_id).get("view_options", [])
 
-        if not current_job.repo_url:
-            current_doc_type = self._extract_doc_type(current_job, current_job_id)
-            return [{
-                "job_id": current_job_id,
-                "doc_type": current_doc_type,
-                "label": current_doc_type or "默认视图",
-            }]
+    def _repo_full_name_from_job(self, job: JobStatus = None, job_id: str = "") -> str:
+        """Resolve repo full name (group/repo) from job metadata with fallbacks."""
+        if job and job.repo_url:
+            try:
+                repo_info = GitHubRepoProcessor.get_repo_info(job.repo_url)
+                full_name = (repo_info.get("full_name") or "").strip()
+                if full_name:
+                    return full_name
+            except Exception:
+                pass
+        if job_id:
+            return self._job_id_to_repo_full_name(job_id)
+        return ""
 
-        target_repo = self._normalize_github_url(current_job.repo_url)
-        target_sub_key = self._subproject_key(
-            current_job.options.subproject_name if current_job.options else "",
-            current_job.options.subproject_path if current_job.options else "",
+    def _job_subproject_identity(self, job: JobStatus = None, job_id: str = "") -> tuple[str, str]:
+        """Return stable subproject key and display label for job."""
+        sub_key = self._subproject_key(
+            job.options.subproject_name if job and job.options else "",
+            job.options.subproject_path if job and job.options else "",
         )
-        if not target_sub_key:
-            _, target_sub_key, _ = self._parse_job_id_variants(current_job_id)
+        sub_label = self._subproject_label(
+            job.options.subproject_name if job and job.options else "",
+            job.options.subproject_path if job and job.options else "",
+        )
+        _, parsed_sub_key, _ = self._parse_job_id_variants(job_id)
+        if not sub_key:
+            sub_key = parsed_sub_key
+        if not sub_label and parsed_sub_key:
+            sub_label = parsed_sub_key.replace("__", "/")
+        if not sub_key:
+            sub_key = "__root__"
+        if not sub_label:
+            sub_label = "仓库根目录"
+        return sub_key, sub_label
 
-        options = {}
-        all_jobs = self.background_worker.get_all_jobs()
-        for candidate in all_jobs.values():
+    def _collect_repo_variant_options(self, current_job: JobStatus, current_job_id: str) -> dict:
+        """Collect subproject/doc-view options for all completed variants of the same repo."""
+        current_doc_type = self._extract_doc_type(current_job, current_job_id) or "default"
+        target_repo_full_name = self._repo_full_name_from_job(current_job, current_job_id)
+        target_repo_normalized = ""
+        if current_job and current_job.repo_url:
+            target_repo_normalized = self._normalize_github_url(current_job.repo_url)
+
+        current_sub_key, current_sub_label = self._job_subproject_identity(current_job, current_job_id)
+
+        buckets: dict[str, dict] = {}
+        for candidate in self._collect_completed_docs():
             if candidate.status != "completed" or not candidate.docs_path:
-                continue
-            if self._normalize_github_url(candidate.repo_url) != target_repo:
                 continue
             if not Path(candidate.docs_path).exists():
                 continue
 
-            sub_key = self._subproject_key(
-                candidate.options.subproject_name if candidate.options else "",
-                candidate.options.subproject_path if candidate.options else "",
-            )
-            if not sub_key:
-                _, sub_key, _ = self._parse_job_id_variants(candidate.job_id)
-            if sub_key != target_sub_key:
+            candidate_repo_full = self._repo_full_name_from_job(candidate, candidate.job_id)
+            if target_repo_full_name and candidate_repo_full != target_repo_full_name:
                 continue
+            if target_repo_normalized:
+                if self._normalize_github_url(candidate.repo_url) != target_repo_normalized:
+                    continue
 
-            doc_type = self._extract_doc_type(candidate, candidate.job_id)
-            label = doc_type if doc_type else "默认视图"
-            options[candidate.job_id] = {
-                "job_id": candidate.job_id,
-                "doc_type": doc_type,
-                "label": label,
+            sub_key, sub_label = self._job_subproject_identity(candidate, candidate.job_id)
+            doc_type = self._extract_doc_type(candidate, candidate.job_id) or "default"
+            completed_at = candidate.completed_at or candidate.created_at
+
+            bucket = buckets.setdefault(sub_key, {
+                "key": sub_key,
+                "label": sub_label,
+                "latest_at": completed_at,
+                "view_map": {},
+            })
+            if completed_at > bucket["latest_at"]:
+                bucket["latest_at"] = completed_at
+                bucket["label"] = sub_label
+
+            existing_view = bucket["view_map"].get(doc_type)
+            if (not existing_view) or completed_at > existing_view["completed_at"]:
+                bucket["view_map"][doc_type] = {
+                    "job_id": candidate.job_id,
+                    "doc_type": doc_type,
+                    "label": doc_type if doc_type else "default",
+                    "completed_at": completed_at,
+                }
+
+        if current_sub_key not in buckets:
+            buckets[current_sub_key] = {
+                "key": current_sub_key,
+                "label": current_sub_label or "仓库根目录",
+                "latest_at": datetime.now(),
+                "view_map": {},
             }
-
-        if current_job_id not in options:
-            current_doc_type = self._extract_doc_type(current_job, current_job_id)
-            options[current_job_id] = {
+        if current_doc_type not in buckets[current_sub_key]["view_map"]:
+            buckets[current_sub_key]["view_map"][current_doc_type] = {
                 "job_id": current_job_id,
                 "doc_type": current_doc_type,
-                "label": current_doc_type or "默认视图",
+                "label": current_doc_type if current_doc_type else "default",
+                "completed_at": datetime.now(),
             }
 
-        items = list(options.values())
-        items.sort(key=lambda x: (0 if x["job_id"] == current_job_id else 1, x["label"]))
-        return items
+        view_matrix: dict[str, list[dict]] = {}
+        subproject_options: list[dict] = []
+        for sub_key, bucket in buckets.items():
+            views = list(bucket["view_map"].values())
+            views.sort(
+                key=lambda item: (
+                    0 if item["job_id"] == current_job_id else 1,
+                    0 if item["doc_type"] == "default" else 1,
+                    item["doc_type"],
+                )
+            )
+            simplified_views = [
+                {"job_id": item["job_id"], "doc_type": item["doc_type"], "label": item["label"]}
+                for item in views
+            ]
+            view_matrix[sub_key] = simplified_views
+            subproject_options.append({
+                "key": sub_key,
+                "label": bucket["label"],
+                "job_id": simplified_views[0]["job_id"] if simplified_views else current_job_id,
+            })
+
+        subproject_options.sort(
+            key=lambda item: (
+                0 if item["key"] == current_sub_key else 1,
+                0 if item["label"] == "仓库根目录" else 1,
+                item["label"],
+            )
+        )
+        current_view_options = view_matrix.get(current_sub_key, [])
+        current_view_job_id = current_job_id
+        if current_view_options:
+            available_job_ids = {item["job_id"] for item in current_view_options}
+            if current_job_id not in available_job_ids:
+                current_view_job_id = current_view_options[0]["job_id"]
+
+        return {
+            "subproject_options": subproject_options,
+            "current_subproject_key": current_sub_key,
+            "current_subproject_label": current_sub_label,
+            "view_options": current_view_options,
+            "current_view_job_id": current_view_job_id,
+            "current_doc_type": current_doc_type,
+            "view_matrix": view_matrix,
+        }
     
     def cleanup_old_jobs(self):
         """Clean up old job status entries."""
@@ -936,7 +1008,7 @@ class WebRoutes:
             jobs_list.append(JobStatusResponse(
                 job_id=job.job_id,
                 repo_url=job.repo_url,
-                title=job.title or GitHubRepoProcessor.generate_title(job.repo_url),
+                title=self._format_task_display_title(job),
                 status=job.status,
                 created_at=job.created_at,
                 started_at=job.started_at,
@@ -1502,6 +1574,28 @@ class WebRoutes:
             })
         return options
 
+    def _format_task_display_title(self, job: JobStatus) -> str:
+        """Format task title as: group/repo | 子项目(可选) | 文档类型."""
+        repo_short = self._repo_full_name_from_job(job, job.job_id)
+        if not repo_short:
+            repo_short = job.repo_url or job.job_id
+
+        subproject_label = self._subproject_label(
+            job.options.subproject_name if job.options else "",
+            job.options.subproject_path if job.options else "",
+        )
+        if not subproject_label:
+            _, sub_key, _ = self._parse_job_id_variants(job.job_id)
+            if sub_key:
+                subproject_label = sub_key.replace("__", "/")
+
+        doc_type = self._extract_doc_type(job, job.job_id) or "default"
+        parts = [repo_short]
+        if subproject_label:
+            parts.append(subproject_label)
+        parts.append(doc_type)
+        return " | ".join(parts)
+
     def _build_admin_context(
         self,
         error: str = None,
@@ -1510,6 +1604,8 @@ class WebRoutes:
     ):
         all_jobs = self.background_worker.get_all_jobs()
         jobs_list = sorted(all_jobs.values(), key=lambda x: x.created_at, reverse=True)
+        for job in jobs_list:
+            setattr(job, "display_title", self._format_task_display_title(job))
         queued_count = sum(1 for j in jobs_list if j.status == 'queued')
         processing_count = sum(1 for j in jobs_list if j.status == 'processing')
         completed_count = sum(1 for j in jobs_list if j.status == 'completed')
@@ -1669,44 +1765,105 @@ class WebRoutes:
 
     def _build_home_cards(self, jobs: list[JobStatus]) -> tuple[list[dict], list[dict], dict]:
         metrics_map = self._build_engagement_map(jobs)
-        cards: list[dict] = []
+        repo_groups: dict[str, dict] = {}
         for job in jobs:
             components_count, file_count = self._safe_doc_stats(job.docs_path)
-            doc_type = self._extract_doc_type(job, job.job_id)
-            subproject_label = self._subproject_label(
-                subproject_name=(job.options.subproject_name if job.options else ""),
-                subproject_path=(job.options.subproject_path if job.options else ""),
-            )
-            repo_short = self._job_id_to_repo_full_name(job.job_id)
-            if job.repo_url:
-                try:
-                    repo_info = GitHubRepoProcessor.get_repo_info(job.repo_url)
-                    repo_short = repo_info.get("full_name", "") or repo_short
-                except Exception:
-                    pass
-            display_title = repo_short
-            if subproject_label:
-                display_title = f"{display_title} [{subproject_label}]"
+            doc_type = self._extract_doc_type(job, job.job_id) or "default"
+            subproject_key, subproject_label = self._job_subproject_identity(job, job.job_id)
+            repo_short = self._repo_full_name_from_job(job, job.job_id) or self._job_id_to_repo_full_name(job.job_id)
+            completed_at = job.completed_at or job.created_at
             metrics = metrics_map.get(job.job_id, {})
-            normalized_doc_type = doc_type or "default"
-            cards.append({
-                "job_id": job.job_id,
-                "title": job.title or GitHubRepoProcessor.generate_title(job.repo_url),
-                "display_title": display_title,
+            group_key = repo_short.lower() or job.job_id.lower()
+            group = repo_groups.setdefault(group_key, {
+                "repo_short": repo_short,
                 "repo_url": job.repo_url,
-                "created_at": job.created_at.strftime("%Y-%m-%d %H:%M"),
-                "completed_at": (job.completed_at or job.created_at).strftime("%Y-%m-%d %H:%M"),
-                "doc_type": normalized_doc_type,
-                "doc_type_icon": self._doc_type_icon(normalized_doc_type),
-                "subproject": subproject_label or "仓库根目录",
-                "status": job.status,
-                "progress": job.progress or "",
+                "primary_job_id": job.job_id,
+                "primary_doc_type": doc_type,
+                "latest_at": completed_at,
+                "created_at": job.created_at,
+                "completed_at": completed_at,
+                "status": "completed",
+                "progress": "",
                 "components_count": components_count,
                 "file_count": file_count,
                 "likes": int(metrics.get("likes", 0)),
                 "favorites": int(metrics.get("favorites", 0)),
                 "views": int(metrics.get("views", 0)),
-                "score": int(metrics.get("score", 0)),
+                "doc_type_map": {},
+                "subproject_map": {},
+            })
+            if completed_at >= group["latest_at"]:
+                group["latest_at"] = completed_at
+                group["primary_job_id"] = job.job_id
+                group["primary_doc_type"] = doc_type
+                group["repo_url"] = job.repo_url
+                group["created_at"] = job.created_at
+                group["completed_at"] = completed_at
+                group["likes"] = int(metrics.get("likes", 0))
+                group["favorites"] = int(metrics.get("favorites", 0))
+                group["views"] = int(metrics.get("views", 0))
+
+            group["components_count"] = max(group["components_count"], components_count)
+            group["file_count"] = max(group["file_count"], file_count)
+
+            existing_doc = group["doc_type_map"].get(doc_type)
+            if (not existing_doc) or completed_at > existing_doc["completed_at"]:
+                group["doc_type_map"][doc_type] = {
+                    "name": doc_type,
+                    "icon": self._doc_type_icon(doc_type),
+                    "job_id": job.job_id,
+                    "completed_at": completed_at,
+                }
+
+            existing_sub = group["subproject_map"].get(subproject_key)
+            if (not existing_sub) or completed_at > existing_sub["completed_at"]:
+                group["subproject_map"][subproject_key] = {
+                    "key": subproject_key,
+                    "label": subproject_label or "仓库根目录",
+                    "completed_at": completed_at,
+                }
+
+        cards: list[dict] = []
+        for group in repo_groups.values():
+            doc_types = list(group["doc_type_map"].values())
+            doc_types.sort(
+                key=lambda item: (
+                    0 if item["name"] == group["primary_doc_type"] else 1,
+                    0 if item["name"] == "default" else 1,
+                    item["name"],
+                )
+            )
+            doc_type_names = [item["name"] for item in doc_types]
+
+            subprojects = list(group["subproject_map"].values())
+            subprojects.sort(
+                key=lambda item: (
+                    0 if item["label"] == "仓库根目录" else 1,
+                    item["label"],
+                )
+            )
+            subproject_labels = [item["label"] for item in subprojects]
+
+            cards.append({
+                "job_id": group["primary_job_id"],
+                "title": group["repo_short"],
+                "display_title": group["repo_short"],
+                "repo_url": group["repo_url"],
+                "created_at": group["created_at"].strftime("%Y-%m-%d %H:%M"),
+                "completed_at": group["completed_at"].strftime("%Y-%m-%d %H:%M"),
+                "doc_type": ", ".join(doc_type_names),
+                "doc_type_icon": self._doc_type_icon(group["primary_doc_type"]),
+                "doc_types": [{"name": item["name"], "icon": item["icon"], "job_id": item["job_id"]} for item in doc_types],
+                "subproject": ", ".join(subproject_labels) if subproject_labels else "仓库根目录",
+                "subprojects": subproject_labels or ["仓库根目录"],
+                "status": group["status"],
+                "progress": group["progress"],
+                "components_count": group["components_count"],
+                "file_count": group["file_count"],
+                "likes": group["likes"],
+                "favorites": group["favorites"],
+                "views": group["views"],
+                "score": group["likes"] * 3 + group["favorites"] * 4 + group["views"],
             })
 
         leaderboard = sorted(cards, key=lambda item: (item["score"], item["views"]), reverse=True)[:10]

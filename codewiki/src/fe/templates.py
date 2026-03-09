@@ -554,6 +554,29 @@ __CW_SHARED_UI_LAYOUT__
             border-radius: var(--radius-sm);
         }
 
+        .card-type-list {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            flex-wrap: wrap;
+            justify-content: flex-end;
+            max-width: 180px;
+        }
+
+        .card-type-icon {
+            border: 1px solid var(--line);
+            background: var(--surface-soft);
+            color: var(--muted);
+            font-size: 0.9rem;
+            line-height: 1;
+            width: 28px;
+            height: 24px;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: var(--radius-sm);
+        }
+
         .card-sub {
             color: var(--muted);
             font-size: 0.78rem;
@@ -570,6 +593,24 @@ __CW_SHARED_UI_LAYOUT__
             border-top: 1px dashed var(--line);
             border-bottom: 1px dashed var(--line);
             padding: 8px 0;
+        }
+
+        .card-subprojects {
+            display: flex;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 6px;
+            color: var(--muted);
+            font-size: 0.75rem;
+        }
+
+        .card-chip {
+            border: 1px solid var(--line);
+            background: var(--surface-soft);
+            color: var(--muted);
+            font-size: 0.72rem;
+            padding: 1px 7px;
+            border-radius: var(--radius-sm);
         }
 
         .card-footer {
@@ -801,15 +842,26 @@ __CW_SHARED_UI_LAYOUT__
                         data-favorited="false"
                     >
                         <div class="card-head">
-                            <a class="card-title" href="/docs/{{ card.job_id }}" target="_blank" rel="noopener">{{ card.title }}</a>
-                            <span class="card-tag">{{ card.doc_type }}</span>
+                            <a class="card-title" href="/docs/{{ card.job_id }}" target="_blank" rel="noopener">{{ card.display_title }}</a>
+                            <div class="card-type-list" aria-label="文档类型列表">
+                                {% for doc_view in card.doc_types %}
+                                <span class="card-type-icon" title="文档类型: {{ doc_view.name }}">{{ doc_view.icon }}</span>
+                                {% endfor %}
+                            </div>
                         </div>
                         <div class="card-sub">{{ card.repo_url }}</div>
                         <div class="card-meta">
                             <span>时间: {{ card.completed_at }}</span>
-                            <span>子项目: {{ card.subproject }}</span>
+                            <span>子项目: {{ card.subprojects|length }} 个</span>
+                            <span>文档视图: {{ card.doc_types|length }} 个</span>
                             <span>组件: {{ card.components_count }}</span>
                             <span>文件: {{ card.file_count }}</span>
+                        </div>
+                        <div class="card-subprojects">
+                            <span>子项目列表:</span>
+                            {% for sp in card.subprojects %}
+                            <span class="card-chip">{{ sp }}</span>
+                            {% endfor %}
                         </div>
                         <div class="card-footer">
                             <div class="engage">
@@ -1193,32 +1245,38 @@ __CW_SHARED_UI_TOKENS__
 
         .chat-drawer-toggle {
             position: fixed;
-            right: 12px;
-            top: 12px;
+            right: 34px;
+            top: 32px;
             transform: none;
-            width: 44px;
-            height: 44px;
-            border: 1px solid var(--line-strong);
-            background: var(--surface);
-            color: var(--primary);
+            width: 68px;
+            height: 68px;
+            border: none;
+            background: transparent;
+            color: #7ea9ce;
             display: inline-flex;
             align-items: center;
             justify-content: center;
-            border-radius: var(--radius-sm);
-            box-shadow: var(--shadow);
+            border-radius: 999px;
+            box-shadow: none;
             cursor: pointer;
             z-index: 125;
-            transition: right 0.22s ease, background 0.14s ease, color 0.14s ease, border-color 0.14s ease;
+            transition: right 0.22s ease, color 0.14s ease, transform 0.14s ease;
         }
 
         .chat-drawer-toggle:hover {
-            background: var(--primary-soft);
-            border-color: var(--primary);
+            color: #5f8eb8;
+            transform: scale(1.06);
+        }
+
+        .chat-drawer-toggle:focus-visible {
+            outline: 2px solid #a8c3dc;
+            outline-offset: 4px;
         }
 
         .chat-drawer-toggle svg {
-            width: 20px;
-            height: 20px;
+            width: 42px;
+            height: 42px;
+            filter: drop-shadow(0 2px 4px rgba(71, 110, 145, 0.2));
         }
 
         body.chat-open .chat-drawer-toggle {
@@ -1781,14 +1839,26 @@ __CW_SHARED_UI_TOKENS__
             .docs-shell {
                 display: block;
             }
+
+            .chat-drawer-toggle {
+                right: 18px;
+                top: 18px;
+                width: 58px;
+                height: 58px;
+            }
+
+            .chat-drawer-toggle svg {
+                width: 36px;
+                height: 36px;
+            }
         }
     </style>
 </head>
 <body>
     <div class="docs-shell">
         <nav class="sidebar">
-            <div class="repo-title">{{ docs_display_title or repo_name }}</div>
             <a href="{{ docs_home_url or '/' }}" class="home-link">← 返回文档中心</a>
+            <div class="repo-title">{{ docs_display_title or repo_name }}</div>
 
             {% if metadata and metadata.generation_info %}
             <div class="sidebar-info">
@@ -1826,9 +1896,25 @@ __CW_SHARED_UI_TOKENS__
             </div>
             {% endif %}
 
+            {% if subproject_options and subproject_options|length > 1 %}
+            <div class="sidebar-control">
+                <label for="subprojectSelect" class="sidebar-control-label">子项目</label>
+                <select id="subprojectSelect" class="sidebar-control-input">
+                    {% for sp in subproject_options %}
+                    <option value="{{ sp.key }}" data-job-id="{{ sp.job_id }}" {% if current_subproject_key == sp.key %}selected{% endif %}>{{ sp.label }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            {% elif current_subproject_label %}
+            <div class="sidebar-control">
+                <label class="sidebar-control-label">子项目</label>
+                <div class="sidebar-control-readonly">{{ current_subproject_label }}</div>
+            </div>
+            {% endif %}
+
             {% if view_options and view_options|length > 1 %}
             <div class="sidebar-control">
-                <label for="viewSelect" class="sidebar-control-label">视图</label>
+                <label for="viewSelect" class="sidebar-control-label">文档视图</label>
                 <select id="viewSelect" class="sidebar-control-input">
                     {% for v in view_options %}
                     <option value="{{ v.job_id }}" {% if current_view_job_id == v.job_id %}selected{% endif %}>{{ v.label }}</option>
@@ -1837,7 +1923,7 @@ __CW_SHARED_UI_TOKENS__
             </div>
             {% elif current_doc_type %}
             <div class="sidebar-control">
-                <label class="sidebar-control-label">视图</label>
+                <label class="sidebar-control-label">文档视图</label>
                 <div class="sidebar-control-readonly">{{ current_doc_type }}</div>
             </div>
             {% endif %}
@@ -1928,10 +2014,22 @@ __CW_SHARED_UI_TOKENS__
             aria-label="打开聊天助手"
             aria-expanded="false"
         >
-            <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                <rect x="5" y="3.8" width="14" height="11.8" rx="2.2" stroke="currentColor" stroke-width="1.7"/>
-                <path d="M8.4 8.4h7.2M8.4 11.2h5.2" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/>
-                <path d="M9 16.2l-2.6 3 .6-2.9h-.8a1.2 1.2 0 0 1-1.2-1.2v-1" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
+            <svg viewBox="0 0 96 96" fill="none" aria-hidden="true">
+                <g stroke="currentColor" stroke-width="4" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M48 14v9"/>
+                    <path d="M26 33h-5M75 33h-5"/>
+                    <rect x="22" y="24" width="52" height="44" rx="15"/>
+                    <path d="M32 44h12M52 44h12"/>
+                    <path d="M34 57c3.7 4.4 8.4 6.6 14 6.6 5.6 0 10.3-2.2 14-6.6"/>
+                    <path d="M36 74h24"/>
+                </g>
+                <circle cx="48" cy="10" r="4.4" fill="currentColor"/>
+                <circle cx="38.8" cy="49.5" r="3.4" fill="currentColor"/>
+                <circle cx="57.2" cy="49.5" r="3.4" fill="currentColor"/>
+                <path d="M80.5 18.5l1.9 4.1 4.2 1.9-4.2 1.9-1.9 4.2-1.9-4.2-4.1-1.9 4.1-1.9 1.9-4.1z" fill="currentColor"/>
+                <path d="M18.4 18.8l1.2 2.6 2.6 1.2-2.6 1.2-1.2 2.6-1.2-2.6-2.6-1.2 2.6-1.2 1.2-2.6z" fill="currentColor"/>
+                <path d="M66.6 28.8l2.2 1.2v2.5l-2.2 1.2-2.2-1.2V30l2.2-1.2z" fill="currentColor" opacity="0.7"/>
+                <path d="M29.4 28.8l2.2 1.2v2.5l-2.2 1.2-2.2-1.2V30l2.2-1.2z" fill="currentColor" opacity="0.7"/>
             </svg>
         </button>
 
@@ -1940,11 +2038,13 @@ __CW_SHARED_UI_TOKENS__
                 <div class="chat-header-top">
                     <div class="chat-title-wrap">
                         <button id="chatPanelToggle" class="chat-panel-toggle" type="button" title="收起聊天助手" aria-label="收起聊天助手">
-                            <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                                <rect x="6" y="6" width="12" height="10" rx="2" stroke="currentColor" stroke-width="1.7"/>
-                                <circle cx="10" cy="11" r="1.1" fill="currentColor"/>
-                                <circle cx="14" cy="11" r="1.1" fill="currentColor"/>
-                                <path d="M12 4.2V6M9.4 17.5h5.2" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/>
+                            <svg viewBox="0 0 64 64" fill="none" aria-hidden="true">
+                                <path d="M32 10v6" stroke="currentColor" stroke-width="3" stroke-linecap="round"/>
+                                <circle cx="32" cy="7" r="3.2" fill="currentColor"/>
+                                <rect x="16" y="18" width="32" height="27" rx="8" stroke="currentColor" stroke-width="3"/>
+                                <circle cx="25.5" cy="31" r="2.2" fill="currentColor"/>
+                                <circle cx="38.5" cy="31" r="2.2" fill="currentColor"/>
+                                <path d="M24.5 38.5c2.3 2 4.7 3 7.5 3s5.2-1 7.5-3" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/>
                             </svg>
                         </button>
                         <div class="chat-title">CodeWikiAgent</div>
@@ -2020,6 +2120,10 @@ __CW_SHARED_UI_TOKENS__
             const contentNavBase = "{{ content_nav_base or (shell_nav_base or ('/static-docs/' ~ (job_id or ''))) }}";
             let currentPagePath = {{ (current_page or "overview.md")|tojson }};
             const navLinks = Array.from(document.querySelectorAll(".nav-link[data-page]"));
+            const currentJobId = {{ (job_id or "")|tojson }};
+            const currentSubprojectKey = {{ (current_subproject_key or "__root__")|tojson }};
+            const currentViewJobId = {{ (current_view_job_id or job_id or "")|tojson }};
+            const viewMatrix = {{ (view_matrix or {})|tojson }};
 
             const encodePagePath = (path) => {
                 return String(path || "overview.md").split("/").map(function(segment) {
@@ -2043,6 +2147,15 @@ __CW_SHARED_UI_TOKENS__
                 navLinks.forEach(function(link) {
                     link.classList.toggle("active", (link.dataset.page || "") === page);
                 });
+            };
+
+            const escapeOptionText = (value) => {
+                return String(value || "")
+                    .replace(/&/g, "&amp;")
+                    .replace(/</g, "&lt;")
+                    .replace(/>/g, "&gt;")
+                    .replace(/\"/g, "&quot;")
+                    .replace(/'/g, "&#39;");
             };
 
             const buildQuery = () => {
@@ -2130,13 +2243,57 @@ __CW_SHARED_UI_TOKENS__
             }
 
             const viewSelect = document.getElementById("viewSelect");
+            const subprojectSelect = document.getElementById("subprojectSelect");
+            const navigateToVariantJob = (targetJobId) => {
+                const safeJobId = String(targetJobId || currentJobId || "").trim();
+                if (!safeJobId) return;
+                const params = new URLSearchParams(window.location.search);
+                params.delete("version");
+                const query = params.toString();
+                window.location.href = "/static-docs/" + encodeURIComponent(safeJobId) + "/overview.md" + (query ? ("?" + query) : "");
+            };
+
+            const populateViewSelect = (subKey, preferredJobId) => {
+                if (!viewSelect) return "";
+                const key = String(subKey || "");
+                const views = Array.isArray(viewMatrix[key]) ? viewMatrix[key] : [];
+                if (!views.length) {
+                    viewSelect.innerHTML = "";
+                    return "";
+                }
+                viewSelect.innerHTML = views.map(function(item) {
+                    return `<option value="${escapeOptionText(item.job_id)}">${escapeOptionText(item.label || item.doc_type || "default")}</option>`;
+                }).join("");
+                const matched = views.find(function(item) { return item.job_id === preferredJobId; });
+                const selectedJobId = (matched && matched.job_id) || views[0].job_id;
+                viewSelect.value = selectedJobId;
+                return selectedJobId;
+            };
+
+            if (subprojectSelect) {
+                const initSubKey = subprojectSelect.value || currentSubprojectKey;
+                if (viewSelect) {
+                    populateViewSelect(initSubKey, currentViewJobId || currentJobId);
+                }
+                subprojectSelect.addEventListener("change", function() {
+                    const selectedKey = subprojectSelect.value || "";
+                    if (viewSelect) {
+                        const targetJobId = populateViewSelect(selectedKey, "");
+                        navigateToVariantJob(targetJobId);
+                        return;
+                    }
+                    const selectedOption = subprojectSelect.selectedOptions && subprojectSelect.selectedOptions[0];
+                    navigateToVariantJob(selectedOption ? selectedOption.getAttribute("data-job-id") : "");
+                });
+            }
+
             if (viewSelect) {
+                if (!subprojectSelect) {
+                    populateViewSelect(currentSubprojectKey, currentViewJobId || currentJobId);
+                }
                 viewSelect.addEventListener("change", function() {
-                    const targetJobId = viewSelect.value || "{{ job_id or '' }}";
-                    const params = new URLSearchParams(window.location.search);
-                    params.delete("version");
-                    const query = params.toString();
-                    window.location.href = "/static-docs/" + targetJobId + "/overview.md" + (query ? ("?" + query) : "");
+                    const targetJobId = viewSelect.value || currentJobId;
+                    navigateToVariantJob(targetJobId);
                 });
             }
 
@@ -2992,6 +3149,12 @@ __CW_SHARED_UI_LAYOUT__
         .status.failed { color: var(--danger); border-color: #dfbebb; background: #fbf1f0; }
         .status.stopped { color: var(--muted); border-color: #c9d2dd; background: #f0f3f7; }
 
+        [data-theme="dark"] .status.completed {
+            color: #8ee3b4;
+            border-color: #2a7b52;
+            background: #143325;
+        }
+
         .task-progress {
             color: var(--muted);
             word-break: break-word;
@@ -3251,7 +3414,7 @@ __CW_SHARED_UI_LAYOUT__
                             <tr
                                 data-job-id="{{ job.job_id }}"
                                 data-status="{{ job.status }}"
-                                data-search="{{ (job.title or '') ~ ' ' ~ job.repo_url ~ ' ' ~ job.job_id ~ ' ' ~ (job.progress or '') ~ ' ' ~ ((job.options.subproject_name if job.options and job.options.subproject_name else '') ) ~ ' ' ~ ((job.options.subproject_path if job.options and job.options.subproject_path else '') ) }}"
+                                data-search="{{ (job.display_title or job.title or '') ~ ' ' ~ job.repo_url ~ ' ' ~ job.job_id ~ ' ' ~ (job.progress or '') ~ ' ' ~ ((job.options.subproject_name if job.options and job.options.subproject_name else '') ) ~ ' ' ~ ((job.options.subproject_path if job.options and job.options.subproject_path else '') ) }}"
                                 data-repo-url="{{ job.repo_url }}"
                                 data-commit-id="{{ job.commit_id or '' }}"
                                 data-priority="{{ job.priority }}"
@@ -3277,7 +3440,7 @@ __CW_SHARED_UI_LAYOUT__
                                 data-concurrency="{{ job.options.concurrency if job.options and job.options.concurrency is not none else 4 }}"
                             >
                                 <td>
-                                    <div class="task-title">{{ job.title or job.repo_url }}</div>
+                                    <div class="task-title">{{ job.display_title or job.title or job.repo_url }}</div>
                                     <div class="task-url">{{ job.repo_url }}</div>
                                     {% if job.options and (job.options.subproject_name or job.options.subproject_path) %}
                                     <div class="task-url">子项目: {{ job.options.subproject_name or job.options.subproject_path }}</div>
