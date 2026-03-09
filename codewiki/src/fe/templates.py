@@ -8,6 +8,7 @@ _SHARED_UI_TOKENS = """
             --bg: #f3f5f8;
             --surface: #ffffff;
             --surface-soft: #eef2f7;
+            --surface-hover: #f5f8fc;
             --line: #d2d9e2;
             --line-strong: #bec8d4;
             --text: #162233;
@@ -24,10 +25,47 @@ _SHARED_UI_TOKENS = """
             --radius-lg: 8px;
         }
 
+        [data-theme="slate"] {
+            --bg: #f1f4f8;
+            --surface: #ffffff;
+            --surface-soft: #e9eef4;
+            --surface-hover: #edf3f9;
+            --line: #cdd6e0;
+            --line-strong: #b5c1cf;
+            --text: #1b2736;
+            --muted: #617184;
+            --primary: #3c5f84;
+            --primary-strong: #2e4a68;
+            --primary-soft: #e4edf6;
+            --success: #2f6d58;
+            --warning: #866432;
+            --danger: #9a4740;
+            --shadow: 0 1px 2px rgba(22, 34, 51, 0.06);
+        }
+
+        [data-theme="sage"] {
+            --bg: #f2f6f2;
+            --surface: #ffffff;
+            --surface-soft: #e8f0e8;
+            --surface-hover: #edf4ed;
+            --line: #cbd9cb;
+            --line-strong: #b2c7b2;
+            --text: #1f2d22;
+            --muted: #5f7564;
+            --primary: #3e6b4f;
+            --primary-strong: #30543d;
+            --primary-soft: #dfecdf;
+            --success: #2f714f;
+            --warning: #7a6732;
+            --danger: #8f4a3f;
+            --shadow: 0 1px 2px rgba(23, 34, 27, 0.08);
+        }
+
         [data-theme="dark"] {
             --bg: #111823;
             --surface: #172334;
             --surface-soft: #1c2a3d;
+            --surface-hover: #223249;
             --line: #2b3e56;
             --line-strong: #385170;
             --text: #e6edf7;
@@ -136,6 +174,7 @@ _SHARED_UI_LAYOUT = """
             border: 1px solid var(--line);
             padding: 14px;
             box-shadow: var(--shadow);
+            transition: background-color 0.16s ease, border-color 0.16s ease;
         }
 
         .btn {
@@ -165,18 +204,37 @@ _SHARED_UI_LAYOUT = """
             height: 16px;
         }
 
+        .theme-select {
+            min-width: 126px;
+            height: 34px;
+            border: 1px solid var(--line);
+            background: var(--surface);
+            color: var(--text);
+            font-size: 0.8rem;
+            padding: 0 8px;
+            border-radius: var(--radius-sm);
+        }
+
         .theme-toggle-icon {
             display: inline-flex;
             align-items: center;
             justify-content: center;
         }
 
-        [data-theme="light"] .theme-icon-dark {
+        .theme-icon-light {
+            display: inline-flex;
+        }
+
+        .theme-icon-dark {
             display: none;
         }
 
         [data-theme="dark"] .theme-icon-light {
             display: none;
+        }
+
+        [data-theme="dark"] .theme-icon-dark {
+            display: inline-flex;
         }
 
         .sr-only {
@@ -281,6 +339,30 @@ _SHARED_UI_LAYOUT = """
             padding: 24px 16px;
             font-size: 0.9rem;
             border-radius: var(--radius-sm);
+        }
+
+        .doc-card,
+        .rank-item,
+        .stat-chip,
+        .stat,
+        .agent-item,
+        .sidebar-info,
+        .table-wrap {
+            transition: background-color 0.16s ease, border-color 0.16s ease;
+        }
+
+        @media (hover: hover) {
+            .panel:hover,
+            .doc-card:hover,
+            .rank-item:hover,
+            .stat-chip:hover,
+            .stat:hover,
+            .agent-item:hover,
+            .sidebar-info:hover,
+            .table-wrap:hover {
+                background: var(--surface-hover);
+                border-color: var(--line-strong);
+            }
         }
 
         @media (max-width: 940px) {
@@ -734,6 +816,12 @@ __CW_SHARED_UI_LAYOUT__
                         </svg>
                     </a>
                 </nav>
+                <select id="themePreset" class="theme-select" aria-label="主题配色">
+                    <option value="light">浅色蓝</option>
+                    <option value="slate">雾蓝灰</option>
+                    <option value="sage">清新绿</option>
+                    <option value="dark">深色夜</option>
+                </select>
                 <button id="themeToggle" class="btn icon-btn" type="button" title="切换主题" aria-label="切换主题">
                     <span class="theme-toggle-icon theme-icon-light" aria-hidden="true">
                         <svg viewBox="0 0 24 24" fill="none">
@@ -887,26 +975,45 @@ __CW_SHARED_UI_LAYOUT__
 
     <script>
         const THEME_KEY = "codewiki_theme";
+        const THEME_PRESETS = ["light", "slate", "sage", "dark"];
+        const THEME_LABELS = {
+            light: "浅色蓝",
+            slate: "雾蓝灰",
+            sage: "清新绿",
+            dark: "深色夜",
+        };
         const CLIENT_ID_KEY = "codewiki_home_client_id";
 
+        function normalizeTheme(theme) {
+            return THEME_PRESETS.includes(theme) ? theme : "light";
+        }
+
         function applyTheme(theme) {
-            document.documentElement.setAttribute("data-theme", theme);
+            const normalized = normalizeTheme(theme);
+            document.documentElement.setAttribute("data-theme", normalized);
+            const select = document.getElementById("themePreset");
+            if (select && select.value !== normalized) {
+                select.value = normalized;
+            }
             const btn = document.getElementById("themeToggle");
             if (btn) {
-                const nextLabel = theme === "dark" ? "切换到浅色模式" : "切换到深色模式";
+                const index = THEME_PRESETS.indexOf(normalized);
+                const next = THEME_PRESETS[(index + 1) % THEME_PRESETS.length];
+                const nextLabel = `切换主题（下一个: ${THEME_LABELS[next] || next}）`;
                 btn.setAttribute("title", nextLabel);
                 btn.setAttribute("aria-label", nextLabel);
             }
         }
 
         function initTheme() {
-            const stored = localStorage.getItem(THEME_KEY) || "light";
+            const stored = normalizeTheme(localStorage.getItem(THEME_KEY) || "light");
             applyTheme(stored);
         }
 
         function toggleTheme() {
-            const current = document.documentElement.getAttribute("data-theme") || "light";
-            const next = current === "dark" ? "light" : "dark";
+            const current = normalizeTheme(document.documentElement.getAttribute("data-theme") || "light");
+            const index = THEME_PRESETS.indexOf(current);
+            const next = THEME_PRESETS[(index + 1) % THEME_PRESETS.length];
             localStorage.setItem(THEME_KEY, next);
             applyTheme(next);
         }
@@ -1112,6 +1219,14 @@ __CW_SHARED_UI_LAYOUT__
             const themeToggle = document.getElementById("themeToggle");
             if (themeToggle) {
                 themeToggle.addEventListener("click", toggleTheme);
+            }
+            const themePreset = document.getElementById("themePreset");
+            if (themePreset) {
+                themePreset.addEventListener("change", function() {
+                    const next = normalizeTheme(themePreset.value);
+                    localStorage.setItem(THEME_KEY, next);
+                    applyTheme(next);
+                });
             }
 
             const refreshBtn = document.getElementById("homeRefresh");
@@ -1902,6 +2017,15 @@ __CW_SHARED_UI_TOKENS__
         <nav class="sidebar">
             <a href="{{ docs_home_url or '/' }}" class="home-link">← 返回文档中心</a>
             <div class="repo-title">{{ docs_display_title or repo_name }}</div>
+            <div class="sidebar-control">
+                <label for="docsThemeSelect" class="sidebar-control-label">主题配色</label>
+                <select id="docsThemeSelect" class="sidebar-control-input">
+                    <option value="light">浅色蓝</option>
+                    <option value="slate">雾蓝灰</option>
+                    <option value="sage">清新绿</option>
+                    <option value="dark">深色夜</option>
+                </select>
+            </div>
 
             {% if metadata and metadata.generation_info %}
             <div class="sidebar-info">
@@ -2156,7 +2280,38 @@ __CW_SHARED_UI_TOKENS__
             }
         });
 
+        const THEME_KEY = "codewiki_theme";
+        const THEME_PRESETS = ["light", "slate", "sage", "dark"];
+
+        function normalizeTheme(theme) {
+            return THEME_PRESETS.includes(theme) ? theme : "light";
+        }
+
+        function applyTheme(theme) {
+            const normalized = normalizeTheme(theme);
+            document.documentElement.setAttribute("data-theme", normalized);
+            const select = document.getElementById("docsThemeSelect");
+            if (select && select.value !== normalized) {
+                select.value = normalized;
+            }
+        }
+
+        function initTheme() {
+            const stored = normalizeTheme(localStorage.getItem(THEME_KEY) || "light");
+            applyTheme(stored);
+        }
+
         document.addEventListener("DOMContentLoaded", function() {
+            initTheme();
+            const docsThemeSelect = document.getElementById("docsThemeSelect");
+            if (docsThemeSelect) {
+                docsThemeSelect.addEventListener("change", function() {
+                    const next = normalizeTheme(docsThemeSelect.value);
+                    localStorage.setItem(THEME_KEY, next);
+                    applyTheme(next);
+                });
+            }
+
             const docsFrame = document.getElementById("docsContentFrame");
             const frameMode = Boolean(docsFrame);
             const shellNavBase = "{{ shell_nav_base or ('/static-docs/' ~ (job_id or '')) }}";
@@ -3443,6 +3598,12 @@ __CW_SHARED_UI_LAYOUT__
                         </svg>
                     </a>
                 </nav>
+                <select id="themePreset" class="theme-select" aria-label="主题配色">
+                    <option value="light">浅色蓝</option>
+                    <option value="slate">雾蓝灰</option>
+                    <option value="sage">清新绿</option>
+                    <option value="dark">深色夜</option>
+                </select>
                 <button id="themeToggle" class="btn icon-btn" type="button" title="切换主题" aria-label="切换主题">
                     <span class="theme-toggle-icon theme-icon-light" aria-hidden="true">
                         <svg viewBox="0 0 24 24" fill="none">
@@ -3891,28 +4052,47 @@ __CW_SHARED_UI_LAYOUT__
         const ADVANCED_STORAGE_KEY = "codewiki_admin_advanced_options";
         const ADMIN_PANEL_STORAGE_KEY = "codewiki_admin_active_panel";
         const THEME_KEY = "codewiki_theme";
+        const THEME_PRESETS = ["light", "slate", "sage", "dark"];
+        const THEME_LABELS = {
+            light: "浅色蓝",
+            slate: "雾蓝灰",
+            sage: "清新绿",
+            dark: "深色夜",
+        };
         let currentLogJobId = "";
         let logAutoRefreshTimer = null;
         let logAutoRefreshEnabled = false;
 
+        function normalizeTheme(theme) {
+            return THEME_PRESETS.includes(theme) ? theme : "light";
+        }
+
         function applyTheme(theme) {
-            document.documentElement.setAttribute("data-theme", theme);
+            const normalized = normalizeTheme(theme);
+            document.documentElement.setAttribute("data-theme", normalized);
+            const select = document.getElementById("themePreset");
+            if (select && select.value !== normalized) {
+                select.value = normalized;
+            }
             const btn = document.getElementById("themeToggle");
             if (btn) {
-                const nextLabel = theme === "dark" ? "切换到浅色模式" : "切换到深色模式";
+                const index = THEME_PRESETS.indexOf(normalized);
+                const next = THEME_PRESETS[(index + 1) % THEME_PRESETS.length];
+                const nextLabel = `切换主题（下一个: ${THEME_LABELS[next] || next}）`;
                 btn.setAttribute("title", nextLabel);
                 btn.setAttribute("aria-label", nextLabel);
             }
         }
 
         function initTheme() {
-            const stored = localStorage.getItem(THEME_KEY) || "light";
+            const stored = normalizeTheme(localStorage.getItem(THEME_KEY) || "light");
             applyTheme(stored);
         }
 
         function toggleTheme() {
-            const current = document.documentElement.getAttribute("data-theme") || "light";
-            const next = current === "dark" ? "light" : "dark";
+            const current = normalizeTheme(document.documentElement.getAttribute("data-theme") || "light");
+            const index = THEME_PRESETS.indexOf(current);
+            const next = THEME_PRESETS[(index + 1) % THEME_PRESETS.length];
             localStorage.setItem(THEME_KEY, next);
             applyTheme(next);
         }
@@ -4358,6 +4538,14 @@ __CW_SHARED_UI_LAYOUT__
             const themeToggle = document.getElementById("themeToggle");
             if (themeToggle) {
                 themeToggle.addEventListener("click", toggleTheme);
+            }
+            const themePreset = document.getElementById("themePreset");
+            if (themePreset) {
+                themePreset.addEventListener("change", function() {
+                    const next = normalizeTheme(themePreset.value);
+                    localStorage.setItem(THEME_KEY, next);
+                    applyTheme(next);
+                });
             }
 
             loadAdvancedOptions();
