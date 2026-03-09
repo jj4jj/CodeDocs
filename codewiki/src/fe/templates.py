@@ -1391,15 +1391,40 @@ __CW_SHARED_UI_TOKENS__
             line-height: 1.45;
             white-space: pre-wrap;
             word-break: break-word;
+            color: var(--text);
         }
 
         .chat-bubble.user {
-            background: #eaf1f8;
-            border-color: #d7e2ee;
+            background: #dfeeff;
+            border-color: #9ec0e3;
+            color: #17324d;
+            margin-left: 26px;
         }
 
         .chat-bubble.assistant {
-            background: #f8fafc;
+            background: #f7fafd;
+            border-color: #ccd9e7;
+            color: #1f2f42;
+            margin-right: 26px;
+        }
+
+        .chat-bubble.assistant.streaming {
+            background: #eaf3fe;
+            border-color: #adc8e5;
+            color: #294663;
+        }
+
+        .chat-bubble.assistant.streaming::after {
+            content: "▋";
+            display: inline-block;
+            margin-left: 2px;
+            animation: chatCursorBlink 0.9s steps(1) infinite;
+        }
+
+        @keyframes chatCursorBlink {
+            0% { opacity: 1; }
+            50% { opacity: 0; }
+            100% { opacity: 1; }
         }
 
         .chat-bubble.assistant.markdown {
@@ -1456,6 +1481,24 @@ __CW_SHARED_UI_TOKENS__
             padding: 4px 6px;
             vertical-align: top;
             text-align: left;
+        }
+
+        [data-theme="dark"] .chat-bubble.user {
+            background: #244767;
+            border-color: #4778a6;
+            color: #e7f2ff;
+        }
+
+        [data-theme="dark"] .chat-bubble.assistant {
+            background: #1b2a3d;
+            border-color: #395170;
+            color: #dbe7f5;
+        }
+
+        [data-theme="dark"] .chat-bubble.assistant.streaming {
+            background: #21364d;
+            border-color: #4f7298;
+            color: #d7e9fb;
         }
 
         .chat-input-wrap {
@@ -2514,6 +2557,58 @@ __CW_SHARED_UI_TOKENS__
                 persistChatStore();
             };
 
+            const commitAssistantMessage = (text) => {
+                const session = getActiveSession();
+                if (!session) return;
+                if (!Array.isArray(session.messages)) {
+                    session.messages = [];
+                }
+                session.messages.push({ role: "assistant", content: text || "" });
+                session.updatedAt = nowText();
+                persistChatStore();
+            };
+
+            const createStreamingAssistantBubble = () => {
+                const bubble = document.createElement("div");
+                bubble.className = "chat-bubble assistant streaming";
+                bubble.textContent = "正在思考...";
+                chatMessagesEl.appendChild(bubble);
+                chatMessagesEl.scrollTop = chatMessagesEl.scrollHeight;
+                return {
+                    update(partialText) {
+                        bubble.textContent = String(partialText || " ");
+                        chatMessagesEl.scrollTop = chatMessagesEl.scrollHeight;
+                    },
+                    finalize(finalText) {
+                        bubble.classList.remove("streaming");
+                        bubble.classList.add("markdown");
+                        bubble.innerHTML = renderMarkdown(finalText || "");
+                        chatMessagesEl.scrollTop = chatMessagesEl.scrollHeight;
+                    },
+                    fail(errorText) {
+                        bubble.classList.remove("streaming");
+                        bubble.textContent = String(errorText || "请求失败");
+                        chatMessagesEl.scrollTop = chatMessagesEl.scrollHeight;
+                    }
+                };
+            };
+
+            const streamTextLike = async (text, onUpdate) => {
+                const fullText = String(text || "");
+                if (!fullText) {
+                    onUpdate("");
+                    return;
+                }
+                let index = 0;
+                while (index < fullText.length) {
+                    const remain = fullText.length - index;
+                    const step = remain > 1800 ? 36 : (remain > 900 ? 22 : (remain > 400 ? 12 : 6));
+                    index = Math.min(fullText.length, index + step);
+                    onUpdate(fullText.slice(0, index));
+                    await new Promise((resolve) => setTimeout(resolve, 14));
+                }
+            };
+
             loadChatStore();
             renderSessionOptions();
             renderActiveMessages();
@@ -2542,6 +2637,9 @@ __CW_SHARED_UI_TOKENS__
                 appendMessage("user", question);
                 chatInputEl.value = "";
                 chatSendBtn.disabled = true;
+                chatSessionSelectEl.disabled = true;
+                chatNewSessionBtn.disabled = true;
+                const streamingBubble = createStreamingAssistantBubble();
 
                 const payload = {
                     protocol: protocol,
@@ -2568,12 +2666,18 @@ __CW_SHARED_UI_TOKENS__
                     if (data && data.session_id) {
                         session.serverSessionId = data.session_id;
                     }
-                    appendMessage("assistant", answer);
+                    await streamTextLike(answer, (partial) => streamingBubble.update(partial));
+                    streamingBubble.finalize(answer);
+                    commitAssistantMessage(answer);
                     persistChatStore();
                 } catch (error) {
-                    appendMessage("assistant", "请求失败: " + (error && error.message ? error.message : String(error)));
+                    const message = "请求失败: " + (error && error.message ? error.message : String(error));
+                    streamingBubble.fail(message);
+                    commitAssistantMessage(message);
                 } finally {
                     chatSendBtn.disabled = false;
+                    chatSessionSelectEl.disabled = false;
+                    chatNewSessionBtn.disabled = false;
                 }
             };
 
