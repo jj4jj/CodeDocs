@@ -70,6 +70,18 @@ async def list_tasks(status_filter: str = None):
     return await web_routes.list_tasks(status_filter)
 
 
+@app.get("/api/docs/engagement")
+async def get_docs_engagement(client_id: str = ""):
+    """API endpoint to fetch docs homepage engagement metrics."""
+    return await web_routes.get_docs_engagement(client_id)
+
+
+@app.post("/api/docs/{job_id}/engagement")
+async def update_docs_engagement(job_id: str, payload: dict = Body(...)):
+    """API endpoint to toggle docs homepage like/favorite."""
+    return await web_routes.update_docs_engagement(job_id, payload)
+
+
 @app.post("/api/tasks")
 async def create_task(
     repo_url: str,

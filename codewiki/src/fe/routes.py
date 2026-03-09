@@ -7,6 +7,8 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from dataclasses import asdict
 import re
+import threading
+import secrets
 from urllib.parse import urlencode
 
 from traceback import format_exc
@@ -40,6 +42,8 @@ class WebRoutes:
         self.background_worker = background_worker
         self.cache_manager = cache_manager
         self.chat_service = None
+        self._engagement_lock = threading.RLock()
+        self._engagement_file = Path(WebAppConfig.CACHE_DIR) / "docs_engagement.json"
 
     def _get_chat_service(self) -> CodeWikiChatService:
         """Lazily create chat service only when chat is actually used."""
@@ -53,13 +57,17 @@ class WebRoutes:
     async def index_get(self, request: Request) -> HTMLResponse:
         """Main page with form for submitting Git repositories."""
         recent_jobs = self._collect_completed_docs()
+        home_cards, home_leaderboard, home_stats = self._build_home_cards(recent_jobs)
         
         context = {
             "message": None,
             "message_type": None,
             "repo_url": "",
             "commit_id": "",
-            "recent_jobs": recent_jobs
+            "recent_jobs": recent_jobs,
+            "home_cards": home_cards,
+            "home_leaderboard": home_leaderboard,
+            "home_stats": home_stats,
         }
         
         return HTMLResponse(content=render_template(WEB_INTERFACE_TEMPLATE, context))
@@ -158,13 +166,17 @@ class WebRoutes:
                         message_type = "error"
         
         recent_jobs = self._collect_completed_docs()
+        home_cards, home_leaderboard, home_stats = self._build_home_cards(recent_jobs)
         
         context = {
             "message": message,
             "message_type": message_type,
             "repo_url": repo_url or "",
             "commit_id": commit_id or "",
-            "recent_jobs": recent_jobs
+            "recent_jobs": recent_jobs,
+            "home_cards": home_cards,
+            "home_leaderboard": home_leaderboard,
+            "home_stats": home_stats,
         }
         
         return HTMLResponse(content=render_template(WEB_INTERFACE_TEMPLATE, context))
@@ -189,6 +201,7 @@ class WebRoutes:
         docs_path = Path(job.docs_path)
         if not docs_path.exists():
             raise HTTPException(status_code=404, detail="Documentation files not found")
+        self._record_doc_view(job_id)
         
         # Redirect to the documentation viewer
         redirect_url = f"/static-docs/{job_id}/"
@@ -917,6 +930,60 @@ class WebRoutes:
         
         jobs_list.sort(key=lambda x: x.created_at, reverse=True)
         return JSONResponse(content=jsonable_encoder(jobs_list))
+
+    async def get_docs_engagement(self, client_id: str = "") -> JSONResponse:
+        """Return engagement metrics for all visible docs cards."""
+        safe_client_id = self._sanitize_client_id(client_id)
+        jobs = self._collect_completed_docs()
+        metrics = self._build_engagement_map(jobs, safe_client_id)
+        if not safe_client_id:
+            safe_client_id = self._new_client_id()
+        return JSONResponse(content={"client_id": safe_client_id, "metrics": metrics})
+
+    async def update_docs_engagement(self, job_id: str, payload: dict) -> JSONResponse:
+        """Update like/favorite state for one docs card."""
+        if not isinstance(payload, dict):
+            raise HTTPException(status_code=400, detail="payload must be a JSON object")
+
+        action = str(payload.get("type", "")).strip().lower()
+        if action not in {"like", "favorite"}:
+            raise HTTPException(status_code=400, detail="type must be like or favorite")
+
+        safe_client_id = self._sanitize_client_id(str(payload.get("client_id", "")))
+        if not safe_client_id:
+            safe_client_id = self._new_client_id()
+
+        enabled = bool(payload.get("enabled", True))
+        bucket = "likes" if action == "like" else "favorites"
+
+        with self._engagement_lock:
+            store = self._load_engagement_store_unlocked()
+            users = set(store.get(bucket, {}).get(job_id, []))
+            if enabled:
+                users.add(safe_client_id)
+            else:
+                users.discard(safe_client_id)
+            store.setdefault(bucket, {})[job_id] = sorted(users)
+            store["updated_at"] = datetime.now().isoformat()
+            self._save_engagement_store_unlocked(store)
+
+            likes_users = set(store.get("likes", {}).get(job_id, []))
+            favorites_users = set(store.get("favorites", {}).get(job_id, []))
+            views_count = int(store.get("views", {}).get(job_id, 0))
+
+        score = len(likes_users) * 3 + len(favorites_users) * 4 + views_count
+        return JSONResponse(content={
+            "client_id": safe_client_id,
+            "job_id": job_id,
+            "metrics": {
+                "likes": len(likes_users),
+                "favorites": len(favorites_users),
+                "views": views_count,
+                "liked": safe_client_id in likes_users,
+                "favorited": safe_client_id in favorites_users,
+                "score": score,
+            },
+        })
     
     async def create_task_api(
         self,
@@ -1437,7 +1504,166 @@ class WebRoutes:
             "doc_type_options": self._doc_type_options(),
             "task_concurrency": self.background_worker.worker_concurrency,
             "task_concurrency_max": WebAppConfig.MAX_TASK_CONCURRENCY,
+            "agent_base_url": WebAppConfig.AGENT_MODEL_BASE_URL,
+            "agent_models": ", ".join(WebAppConfig.AGENT_MODEL_NAMES),
+            "agent_api_key_set": bool(WebAppConfig.AGENT_MODEL_API_KEY),
         }
+
+    def _new_client_id(self) -> str:
+        return f"c{secrets.token_hex(8)}"
+
+    def _sanitize_client_id(self, value: str) -> str:
+        text = (value or "").strip()
+        if not text:
+            return ""
+        text = re.sub(r"[^a-zA-Z0-9_-]", "", text)
+        return text[:64]
+
+    def _default_engagement_store(self) -> dict:
+        return {
+            "likes": {},
+            "favorites": {},
+            "views": {},
+            "updated_at": "",
+        }
+
+    def _load_engagement_store_unlocked(self) -> dict:
+        if not self._engagement_file.exists():
+            return self._default_engagement_store()
+        try:
+            data = file_manager.load_json(self._engagement_file)
+        except Exception:
+            return self._default_engagement_store()
+        if not isinstance(data, dict):
+            return self._default_engagement_store()
+
+        normalized = self._default_engagement_store()
+        for key in ("likes", "favorites"):
+            payload = data.get(key, {})
+            if not isinstance(payload, dict):
+                continue
+            for job_id, users in payload.items():
+                if not isinstance(job_id, str):
+                    continue
+                if not isinstance(users, list):
+                    continue
+                clean_users = set()
+                for item in users:
+                    safe = self._sanitize_client_id(str(item))
+                    if safe:
+                        clean_users.add(safe)
+                normalized[key][job_id] = sorted(clean_users)
+
+        views_payload = data.get("views", {})
+        if isinstance(views_payload, dict):
+            for job_id, views in views_payload.items():
+                if not isinstance(job_id, str):
+                    continue
+                try:
+                    normalized["views"][job_id] = max(0, int(views))
+                except (TypeError, ValueError):
+                    continue
+        normalized["updated_at"] = str(data.get("updated_at", "") or "")
+        return normalized
+
+    def _save_engagement_store_unlocked(self, data: dict) -> None:
+        self._engagement_file.parent.mkdir(parents=True, exist_ok=True)
+        file_manager.save_json(data, self._engagement_file)
+
+    def _record_doc_view(self, job_id: str) -> None:
+        with self._engagement_lock:
+            store = self._load_engagement_store_unlocked()
+            views = int(store.get("views", {}).get(job_id, 0))
+            store.setdefault("views", {})[job_id] = views + 1
+            store["updated_at"] = datetime.now().isoformat()
+            self._save_engagement_store_unlocked(store)
+
+    def _build_engagement_map(self, jobs: list[JobStatus], client_id: str = "") -> dict[str, dict]:
+        with self._engagement_lock:
+            store = self._load_engagement_store_unlocked()
+
+        client_id = self._sanitize_client_id(client_id)
+        metrics = {}
+        for job in jobs:
+            job_id = job.job_id
+            likes_users = set(store.get("likes", {}).get(job_id, []))
+            favorites_users = set(store.get("favorites", {}).get(job_id, []))
+            views_count = int(store.get("views", {}).get(job_id, 0))
+            metrics[job_id] = {
+                "likes": len(likes_users),
+                "favorites": len(favorites_users),
+                "views": views_count,
+                "liked": bool(client_id and client_id in likes_users),
+                "favorited": bool(client_id and client_id in favorites_users),
+                "score": len(likes_users) * 3 + len(favorites_users) * 4 + views_count,
+            }
+        return metrics
+
+    def _safe_doc_stats(self, docs_path_value: str | None) -> tuple[int, int]:
+        if not docs_path_value:
+            return 0, 0
+        docs_path = Path(docs_path_value)
+        if not docs_path.exists():
+            return 0, 0
+
+        components_count = 0
+        metadata_file = docs_path / "metadata.json"
+        if metadata_file.exists():
+            try:
+                metadata = file_manager.load_json(metadata_file)
+                if isinstance(metadata, dict):
+                    stats = metadata.get("statistics", {})
+                    if isinstance(stats, dict):
+                        components_count = int(stats.get("total_components", 0))
+            except Exception:
+                components_count = 0
+
+        markdown_files = 0
+        try:
+            markdown_files = sum(1 for _ in docs_path.glob("*.md"))
+            if markdown_files == 0:
+                markdown_files = sum(1 for _ in docs_path.rglob("*.md"))
+        except Exception:
+            markdown_files = 0
+        return components_count, markdown_files
+
+    def _build_home_cards(self, jobs: list[JobStatus]) -> tuple[list[dict], list[dict], dict]:
+        metrics_map = self._build_engagement_map(jobs)
+        cards: list[dict] = []
+        for job in jobs:
+            components_count, file_count = self._safe_doc_stats(job.docs_path)
+            doc_type = self._extract_doc_type(job, job.job_id)
+            subproject_label = self._subproject_label(
+                subproject_name=(job.options.subproject_name if job.options else ""),
+                subproject_path=(job.options.subproject_path if job.options else ""),
+            )
+            metrics = metrics_map.get(job.job_id, {})
+            cards.append({
+                "job_id": job.job_id,
+                "title": job.title or GitHubRepoProcessor.generate_title(job.repo_url),
+                "repo_url": job.repo_url,
+                "created_at": job.created_at.strftime("%Y-%m-%d %H:%M"),
+                "completed_at": (job.completed_at or job.created_at).strftime("%Y-%m-%d %H:%M"),
+                "doc_type": doc_type or "default",
+                "subproject": subproject_label or "仓库根目录",
+                "status": job.status,
+                "progress": job.progress or "",
+                "components_count": components_count,
+                "file_count": file_count,
+                "likes": int(metrics.get("likes", 0)),
+                "favorites": int(metrics.get("favorites", 0)),
+                "views": int(metrics.get("views", 0)),
+                "score": int(metrics.get("score", 0)),
+            })
+
+        leaderboard = sorted(cards, key=lambda item: (item["score"], item["views"]), reverse=True)[:10]
+        stats = {
+            "total_docs": len(cards),
+            "total_components": sum(item["components_count"] for item in cards),
+            "total_files": sum(item["file_count"] for item in cards),
+            "total_views": sum(item["views"] for item in cards),
+        }
+        return cards, leaderboard, stats
 
     def _csv_to_list(self, value: str):
         text = (value or "").strip()
