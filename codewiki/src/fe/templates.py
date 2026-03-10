@@ -5393,9 +5393,9 @@ __CW_SHARED_UI_LAYOUT__
                                             {% if not option.built_in %}
                                             <button
                                                 type="button"
-                                                class="btn btn-danger doc-type-prepare-delete-btn"
+                                                class="btn btn-danger doc-type-delete-btn"
                                                 data-doc-type="{{ option.name }}"
-                                                title="准备删除模板"
+                                                title="删除模板"
                                             >
                                                 删除
                                             </button>
@@ -5409,32 +5409,8 @@ __CW_SHARED_UI_LAYOUT__
                     </div>
                 </div>
                 {% endif %}
-
-                <form method="POST" action="/admin/doc-types/delete" id="docTypeDeleteForm" style="margin-top:10px; border-top: 1px solid var(--line); padding-top: 12px;">
-                    <h3 style="font-size:0.92rem; margin-bottom:8px; color: var(--danger);">删除自定义模板（危险操作）</h3>
-                    <div class="form-grid-2" style="margin-bottom:0;">
-                        <div class="field">
-                            <label for="delete_doc_type">模板 Key</label>
-                            <select id="delete_doc_type" name="doc_type" required>
-                                <option value="">请选择自定义模板</option>
-                                {% set custom_doc_types = doc_type_options | selectattr("built_in", "equalto", false) | list %}
-                                {% for option in custom_doc_types %}
-                                <option value="{{ option.name }}">{{ option.name }}</option>
-                                {% endfor %}
-                            </select>
-                            {% if custom_doc_types|length == 0 %}
-                            <small style="display:block; margin-top:6px; color:var(--muted);">当前没有可删除的自定义模板。</small>
-                            {% endif %}
-                        </div>
-                        <div class="field">
-                            <label for="delete_doc_type_confirm">二次确认</label>
-                            <input id="delete_doc_type_confirm" type="text" placeholder="再次输入上方模板 Key 以确认删除">
-                            <small style="display:block; margin-top:6px; color:var(--danger);">必须与模板 Key 完全一致，按钮才会启用。</small>
-                        </div>
-                    </div>
-                    <div class="actions-row" style="justify-content:flex-start;">
-                        <button class="btn btn-danger" type="submit" id="docTypeDeleteBtn" disabled>删除模板</button>
-                    </div>
+                <form method="POST" action="/admin/doc-types/delete" id="docTypeDeleteInlineForm" style="display:none;">
+                    <input type="hidden" name="doc_type" id="docTypeDeleteInlineInput" value="">
                 </form>
             </section>
 
@@ -6082,44 +6058,24 @@ __CW_SHARED_UI_LAYOUT__
                 });
             });
 
-            const deleteForm = document.getElementById("docTypeDeleteForm");
-            const deleteSelect = document.getElementById("delete_doc_type");
-            const deleteConfirm = document.getElementById("delete_doc_type_confirm");
-            const deleteBtn = document.getElementById("docTypeDeleteBtn");
-
-            const syncDeleteButton = () => {
-                if (!deleteBtn || !deleteSelect || !deleteConfirm) return;
-                const key = String(deleteSelect.value || "").trim();
-                const confirmValue = String(deleteConfirm.value || "").trim();
-                deleteBtn.disabled = !key || confirmValue !== key;
-            };
-
-            if (deleteSelect) {
-                deleteSelect.addEventListener("change", syncDeleteButton);
-            }
-            if (deleteConfirm) {
-                deleteConfirm.addEventListener("input", syncDeleteButton);
-            }
-            syncDeleteButton();
-
-            if (deleteForm) {
-                deleteForm.addEventListener("submit", (event) => {
-                    syncDeleteButton();
-                    if (deleteBtn && deleteBtn.disabled) {
-                        event.preventDefault();
-                        alert("请输入与模板 Key 完全一致的确认内容。");
-                    }
-                });
-            }
-
-            document.querySelectorAll(".doc-type-prepare-delete-btn[data-doc-type]").forEach((btn) => {
+            const deleteForm = document.getElementById("docTypeDeleteInlineForm");
+            const deleteInput = document.getElementById("docTypeDeleteInlineInput");
+            document.querySelectorAll(".doc-type-delete-btn[data-doc-type]").forEach((btn) => {
                 btn.addEventListener("click", () => {
-                    if (!deleteSelect || !deleteConfirm) return;
-                    deleteSelect.value = String(btn.getAttribute("data-doc-type") || "").trim();
-                    deleteConfirm.value = "";
-                    syncDeleteButton();
-                    deleteConfirm.focus();
-                    deleteConfirm.scrollIntoView({ behavior: "smooth", block: "center" });
+                    const docType = String(btn.getAttribute("data-doc-type") || "").trim();
+                    if (!docType) return;
+                    const typed = window.prompt(
+                        `危险操作：将删除自定义模板 \"${docType}\"。\n请输入模板 Key 以确认：`,
+                        "",
+                    );
+                    if (typed === null) return;
+                    if (String(typed).trim() !== docType) {
+                        alert("输入的模板 Key 不一致，已取消删除。");
+                        return;
+                    }
+                    if (!deleteForm || !deleteInput) return;
+                    deleteInput.value = docType;
+                    deleteForm.submit();
                 });
             });
         }
