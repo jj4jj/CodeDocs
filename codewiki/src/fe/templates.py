@@ -3361,18 +3361,22 @@ __CW_SHARED_UI_TOKENS__
                     const explicit = String(event.tool_name || "").trim();
                     if (explicit) return explicit;
                     const title = String(event.title || "").trim();
-                    const matched = title.match(/[:：]\\s*(.+)$/);
-                    if (matched && matched[1]) return matched[1].trim();
+                    const sepIdx = Math.max(title.lastIndexOf(":"), title.lastIndexOf("："));
+                    if (sepIdx >= 0 && sepIdx + 1 < title.length) {
+                        const maybeTool = title.slice(sepIdx + 1).trim();
+                        if (maybeTool) return maybeTool;
+                    }
                     return "shell";
                 }
 
-                const title = String(event.title || "")
-                    .replace(/思考|已启用技能|工具调用|回答|块/g, "")
-                    .replace(/[:：]/g, " ")
-                    .trim();
+                let title = String(event.title || "");
+                ["思考", "已启用技能", "工具调用", "回答", "块"].forEach(function(token) {
+                    title = title.split(token).join("");
+                });
+                title = title.split(":").join(" ").split("：").join(" ").trim();
                 if (title) return title;
 
-                const line = String(event.content || "").split(/\r?\n/).find(function(part) {
+                const line = String(event.content || "").split("\\n").find(function(part) {
                     return String(part || "").trim();
                 }) || "";
                 const normalized = String(line).trim();
@@ -3579,7 +3583,7 @@ __CW_SHARED_UI_TOKENS__
             const parseSseFrame = (rawFrame) => {
                 const frame = String(rawFrame || "").trim();
                 if (!frame) return null;
-                const lines = frame.split(/\r?\n/);
+                const lines = frame.split("\\n");
                 let eventName = "message";
                 const dataLines = [];
                 lines.forEach(function(line) {
@@ -3594,7 +3598,7 @@ __CW_SHARED_UI_TOKENS__
                 });
                 return {
                     event: eventName,
-                    data: dataLines.join("\n"),
+                    data: dataLines.join("\\n"),
                 };
             };
 
@@ -3623,7 +3627,7 @@ __CW_SHARED_UI_TOKENS__
                         break;
                     }
                     buffer += decoder.decode(value, { stream: true });
-                    let sepIndex = buffer.indexOf("\n\n");
+                    let sepIndex = buffer.indexOf("\\n\\n");
                     while (sepIndex >= 0) {
                         const rawFrame = buffer.slice(0, sepIndex);
                         buffer = buffer.slice(sepIndex + 2);
@@ -3642,7 +3646,7 @@ __CW_SHARED_UI_TOKENS__
                                 if (payloadObj) onEvent(payloadObj);
                             }
                         }
-                        sepIndex = buffer.indexOf("\n\n");
+                        sepIndex = buffer.indexOf("\\n\\n");
                     }
                 }
 
