@@ -9,6 +9,7 @@ and a bash tool executed in a constrained session workspace.
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
 import os
 import re
@@ -71,6 +72,7 @@ class _ChatSession:
     subproject_path: str = ""
     temp_user: str = ""
     history: list[dict[str, str]] = field(default_factory=list)
+    trace_events: list[dict[str, Any]] = field(default_factory=list)
     model_name: str = ""
 
 
@@ -81,56 +83,99 @@ class _ChatDeps:
 
 
 async def _list_docs_tool(ctx: RunContext[_ChatDeps], subpath: str = "", limit: int = 200) -> str:
+    trace_id = ctx.deps.service.trace_tool_start(
+        ctx.deps.session,
+        "list_docs",
+        {"subpath": subpath, "limit": limit},
+    )
     docs_root = ctx.deps.session.docs_dir
-    target = _resolve_under(docs_root, subpath or ".")
-    if not target.exists():
-        return f"Path not found: {target}"
-    if target.is_file():
-        return str(target.relative_to(docs_root))
+    try:
+        target = _resolve_under(docs_root, subpath or ".")
+        if not target.exists():
+            result = f"Path not found: {target}"
+            ctx.deps.service.trace_tool_end(ctx.deps.session, trace_id, result, ok=True)
+            return result
+        if target.is_file():
+            result = str(target.relative_to(docs_root))
+            ctx.deps.service.trace_tool_end(ctx.deps.session, trace_id, result, ok=True)
+            return result
 
-    rows: list[str] = []
-    for path in sorted(target.rglob("*")):
-        if len(rows) >= max(1, limit):
-            break
-        rel = path.relative_to(docs_root).as_posix()
-        prefix = "d" if path.is_dir() else "f"
-        rows.append(f"[{prefix}] {rel}")
-    if not rows:
-        return "No files found"
-    return "\n".join(rows)
+        rows: list[str] = []
+        for path in sorted(target.rglob("*")):
+            if len(rows) >= max(1, limit):
+                break
+            rel = path.relative_to(docs_root).as_posix()
+            prefix = "d" if path.is_dir() else "f"
+            rows.append(f"[{prefix}] {rel}")
+        result = "\n".join(rows) if rows else "No files found"
+        ctx.deps.service.trace_tool_end(ctx.deps.session, trace_id, result, ok=True)
+        return result
+    except Exception as exc:
+        ctx.deps.service.trace_tool_end(ctx.deps.session, trace_id, f"Tool failed: {exc}", ok=False)
+        raise
 
 
 async def _read_doc_tool(ctx: RunContext[_ChatDeps], relative_path: str) -> str:
+    trace_id = ctx.deps.service.trace_tool_start(
+        ctx.deps.session,
+        "read_doc",
+        {"relative_path": relative_path},
+    )
     docs_root = ctx.deps.session.docs_dir
-    target = _resolve_under(docs_root, relative_path)
-    if not target.exists() or not target.is_file():
-        return f"Document not found: {relative_path}"
-    if target.suffix.lower() not in {".md", ".txt", ".json"}:
-        return f"Unsupported doc file type: {target.suffix}"
-    return _clip_text(file_manager.load_text(target), WebAppConfig.CHAT_MAX_TOOL_OUTPUT_CHARS)
+    try:
+        target = _resolve_under(docs_root, relative_path)
+        if not target.exists() or not target.is_file():
+            result = f"Document not found: {relative_path}"
+            ctx.deps.service.trace_tool_end(ctx.deps.session, trace_id, result, ok=True)
+            return result
+        if target.suffix.lower() not in {".md", ".txt", ".json"}:
+            result = f"Unsupported doc file type: {target.suffix}"
+            ctx.deps.service.trace_tool_end(ctx.deps.session, trace_id, result, ok=True)
+            return result
+        result = _clip_text(file_manager.load_text(target), WebAppConfig.CHAT_MAX_TOOL_OUTPUT_CHARS)
+        ctx.deps.service.trace_tool_end(ctx.deps.session, trace_id, result, ok=True)
+        return result
+    except Exception as exc:
+        ctx.deps.service.trace_tool_end(ctx.deps.session, trace_id, f"Tool failed: {exc}", ok=False)
+        raise
 
 
 async def _list_code_tool(ctx: RunContext[_ChatDeps], subpath: str = "", limit: int = 400) -> str:
+    trace_id = ctx.deps.service.trace_tool_start(
+        ctx.deps.session,
+        "list_code_files",
+        {"subpath": subpath, "limit": limit},
+    )
     repo_root = ctx.deps.session.repo_dir
-    if not repo_root or not repo_root.exists():
-        return "Code repository is unavailable for this chat session."
+    try:
+        if not repo_root or not repo_root.exists():
+            result = "Code repository is unavailable for this chat session."
+            ctx.deps.service.trace_tool_end(ctx.deps.session, trace_id, result, ok=True)
+            return result
 
-    target = _resolve_under(repo_root, subpath or ".")
-    if not target.exists():
-        return f"Path not found: {target}"
-    if target.is_file():
-        return str(target.relative_to(repo_root))
+        target = _resolve_under(repo_root, subpath or ".")
+        if not target.exists():
+            result = f"Path not found: {target}"
+            ctx.deps.service.trace_tool_end(ctx.deps.session, trace_id, result, ok=True)
+            return result
+        if target.is_file():
+            result = str(target.relative_to(repo_root))
+            ctx.deps.service.trace_tool_end(ctx.deps.session, trace_id, result, ok=True)
+            return result
 
-    rows: list[str] = []
-    for path in sorted(target.rglob("*")):
-        if len(rows) >= max(1, limit):
-            break
-        rel = path.relative_to(repo_root).as_posix()
-        prefix = "d" if path.is_dir() else "f"
-        rows.append(f"[{prefix}] {rel}")
-    if not rows:
-        return "No files found"
-    return "\n".join(rows)
+        rows: list[str] = []
+        for path in sorted(target.rglob("*")):
+            if len(rows) >= max(1, limit):
+                break
+            rel = path.relative_to(repo_root).as_posix()
+            prefix = "d" if path.is_dir() else "f"
+            rows.append(f"[{prefix}] {rel}")
+        result = "\n".join(rows) if rows else "No files found"
+        ctx.deps.service.trace_tool_end(ctx.deps.session, trace_id, result, ok=True)
+        return result
+    except Exception as exc:
+        ctx.deps.service.trace_tool_end(ctx.deps.session, trace_id, f"Tool failed: {exc}", ok=False)
+        raise
 
 
 async def _read_code_tool(
@@ -139,24 +184,39 @@ async def _read_code_tool(
     start_line: int = 1,
     end_line: int = 220,
 ) -> str:
+    trace_id = ctx.deps.service.trace_tool_start(
+        ctx.deps.session,
+        "read_code",
+        {"relative_path": relative_path, "start_line": start_line, "end_line": end_line},
+    )
     repo_root = ctx.deps.session.repo_dir
-    if not repo_root or not repo_root.exists():
-        return "Code repository is unavailable for this chat session."
+    try:
+        if not repo_root or not repo_root.exists():
+            result = "Code repository is unavailable for this chat session."
+            ctx.deps.service.trace_tool_end(ctx.deps.session, trace_id, result, ok=True)
+            return result
 
-    target = _resolve_under(repo_root, relative_path)
-    if not target.exists() or not target.is_file():
-        return f"Code file not found: {relative_path}"
+        target = _resolve_under(repo_root, relative_path)
+        if not target.exists() or not target.is_file():
+            result = f"Code file not found: {relative_path}"
+            ctx.deps.service.trace_tool_end(ctx.deps.session, trace_id, result, ok=True)
+            return result
 
-    text = file_manager.load_text(target)
-    lines = text.splitlines()
-    line_count = len(lines)
-    lo = max(1, start_line)
-    hi = min(max(lo, end_line), line_count)
-    selected = lines[lo - 1 : hi]
-    numbered = [f"{idx + lo:>5} | {line}" for idx, line in enumerate(selected)]
-    payload = "\n".join(numbered) if numbered else ""
-    header = f"# {target.relative_to(repo_root).as_posix()} ({lo}-{hi}/{line_count})"
-    return _clip_text(f"{header}\n{payload}", WebAppConfig.CHAT_MAX_TOOL_OUTPUT_CHARS)
+        text = file_manager.load_text(target)
+        lines = text.splitlines()
+        line_count = len(lines)
+        lo = max(1, start_line)
+        hi = min(max(lo, end_line), line_count)
+        selected = lines[lo - 1 : hi]
+        numbered = [f"{idx + lo:>5} | {line}" for idx, line in enumerate(selected)]
+        payload = "\n".join(numbered) if numbered else ""
+        header = f"# {target.relative_to(repo_root).as_posix()} ({lo}-{hi}/{line_count})"
+        result = _clip_text(f"{header}\n{payload}", WebAppConfig.CHAT_MAX_TOOL_OUTPUT_CHARS)
+        ctx.deps.service.trace_tool_end(ctx.deps.session, trace_id, result, ok=True)
+        return result
+    except Exception as exc:
+        ctx.deps.service.trace_tool_end(ctx.deps.session, trace_id, f"Tool failed: {exc}", ok=False)
+        raise
 
 
 async def _grep_code_tool(
@@ -165,30 +225,47 @@ async def _grep_code_tool(
     subpath: str = "",
     limit: int = 80,
 ) -> str:
+    trace_id = ctx.deps.service.trace_tool_start(
+        ctx.deps.session,
+        "grep_code",
+        {"pattern": pattern, "subpath": subpath, "limit": limit},
+    )
     repo_root = ctx.deps.session.repo_dir
-    if not repo_root or not repo_root.exists():
-        return "Code repository is unavailable for this chat session."
+    try:
+        if not repo_root or not repo_root.exists():
+            result = "Code repository is unavailable for this chat session."
+            ctx.deps.service.trace_tool_end(ctx.deps.session, trace_id, result, ok=True)
+            return result
 
-    target = _resolve_under(repo_root, subpath or ".")
-    if not target.exists():
-        return f"Path not found: {target}"
+        target = _resolve_under(repo_root, subpath or ".")
+        if not target.exists():
+            result = f"Path not found: {target}"
+            ctx.deps.service.trace_tool_end(ctx.deps.session, trace_id, result, ok=True)
+            return result
 
-    regex = re.compile(pattern)
-    rows: list[str] = []
-    for path in sorted(target.rglob("*")):
-        if not path.is_file():
-            continue
-        try:
-            text = file_manager.load_text(path)
-        except Exception:
-            continue
-        for idx, line in enumerate(text.splitlines(), start=1):
-            if regex.search(line):
-                rel = path.relative_to(repo_root).as_posix()
-                rows.append(f"{rel}:{idx}: {line.strip()}")
-                if len(rows) >= max(1, limit):
-                    return "\n".join(rows)
-    return "\n".join(rows) if rows else "No matches found."
+        regex = re.compile(pattern)
+        rows: list[str] = []
+        for path in sorted(target.rglob("*")):
+            if not path.is_file():
+                continue
+            try:
+                text = file_manager.load_text(path)
+            except Exception:
+                continue
+            for idx, line in enumerate(text.splitlines(), start=1):
+                if regex.search(line):
+                    rel = path.relative_to(repo_root).as_posix()
+                    rows.append(f"{rel}:{idx}: {line.strip()}")
+                    if len(rows) >= max(1, limit):
+                        result = "\n".join(rows)
+                        ctx.deps.service.trace_tool_end(ctx.deps.session, trace_id, result, ok=True)
+                        return result
+        result = "\n".join(rows) if rows else "No matches found."
+        ctx.deps.service.trace_tool_end(ctx.deps.session, trace_id, result, ok=True)
+        return result
+    except Exception as exc:
+        ctx.deps.service.trace_tool_end(ctx.deps.session, trace_id, f"Tool failed: {exc}", ok=False)
+        raise
 
 
 async def _run_bash_tool(
@@ -196,11 +273,22 @@ async def _run_bash_tool(
     command: str,
     timeout_seconds: int = 20,
 ) -> str:
-    return ctx.deps.service.run_shell_command(
-        session=ctx.deps.session,
-        command=command,
-        timeout_seconds=timeout_seconds,
+    trace_id = ctx.deps.service.trace_tool_start(
+        ctx.deps.session,
+        "bash",
+        {"command": command, "timeout_seconds": timeout_seconds},
     )
+    try:
+        result = ctx.deps.service.run_shell_command(
+            session=ctx.deps.session,
+            command=command,
+            timeout_seconds=timeout_seconds,
+        )
+        ctx.deps.service.trace_tool_end(ctx.deps.session, trace_id, result, ok=True)
+        return result
+    except Exception as exc:
+        ctx.deps.service.trace_tool_end(ctx.deps.session, trace_id, f"Tool failed: {exc}", ok=False)
+        raise
 
 
 class CodeWikiChatService:
@@ -214,6 +302,66 @@ class CodeWikiChatService:
         self._provider = OpenAIProvider(
             base_url=WebAppConfig.AGENT_MODEL_BASE_URL,
             api_key=WebAppConfig.AGENT_MODEL_API_KEY,
+        )
+
+    def _serialize_trace_payload(self, payload: Any, max_chars: int = 1400) -> str:
+        if payload is None:
+            return ""
+        try:
+            text = json.dumps(payload, ensure_ascii=False, indent=2)
+        except Exception:
+            text = str(payload)
+        return _clip_text(text, max_chars)
+
+    def _push_trace_event(
+        self,
+        session: _ChatSession,
+        event_type: str,
+        title: str,
+        content: str,
+        collapsed: bool = True,
+        **extra: Any,
+    ) -> int:
+        event = {
+            "type": event_type,
+            "title": title,
+            "content": _clip_text(str(content or ""), 6000),
+            "collapsed": collapsed,
+            "timestamp": datetime.now().isoformat(),
+        }
+        event.update(extra)
+        session.trace_events.append(event)
+        return len(session.trace_events) - 1
+
+    def trace_tool_start(self, session: _ChatSession, tool_name: str, payload: Optional[dict[str, Any]] = None) -> int:
+        return self._push_trace_event(
+            session=session,
+            event_type="tool",
+            title=f"工具调用: {tool_name}",
+            content="执行中...",
+            collapsed=True,
+            tool_name=tool_name,
+            status="running",
+            input=self._serialize_trace_payload(payload),
+        )
+
+    def trace_tool_end(self, session: _ChatSession, trace_id: int, output: str, ok: bool = True) -> None:
+        status = "ok" if ok else "error"
+        clipped_output = _clip_text(str(output or ""), 4500)
+        if 0 <= trace_id < len(session.trace_events):
+            event = session.trace_events[trace_id]
+            if isinstance(event, dict) and event.get("type") == "tool":
+                event["status"] = status
+                event["content"] = clipped_output
+                event["finished_at"] = datetime.now().isoformat()
+                return
+        self._push_trace_event(
+            session=session,
+            event_type="tool",
+            title="工具调用",
+            content=clipped_output,
+            collapsed=True,
+            status=status,
         )
 
     def _build_tools(self) -> list[Tool]:
@@ -716,27 +864,64 @@ class CodeWikiChatService:
         self._cleanup_expired_sessions()
         safe_session_id = (session_id or "").strip() or secrets.token_hex(12)
         session = self._create_or_get_session(job_id, safe_session_id, current_page=current_page)
+        session.trace_events = []
 
         safe_messages = list(messages or [])
         prompt = self._format_prompt(session, safe_messages, user_query=user_query)
         agent, model_name = self._build_agent(session)
+        self._push_trace_event(
+            session=session,
+            event_type="thinking",
+            title="思考",
+            content=f"正在分析问题，并规划检索路径（当前页面: {session.current_page}）。",
+            collapsed=True,
+            status="done",
+        )
+        self._push_trace_event(
+            session=session,
+            event_type="skill",
+            title="已启用技能",
+            content=(
+                "list_docs / read_doc / list_code_files / read_code / grep_code / bash(只读)\n"
+                f"代码作用域: {session.repo_dir.as_posix() if session.repo_dir else '(unavailable)'}"
+            ),
+            collapsed=True,
+            status="ready",
+        )
 
         deps = _ChatDeps(service=self, session=session)
         try:
             result = await agent.run(prompt, deps=deps)
         except Exception as exc:
             diagnostics = self._build_model_diagnostics(exc, model_name)
+            self._push_trace_event(
+                session=session,
+                event_type="content",
+                title="执行失败",
+                content=diagnostics,
+                collapsed=False,
+                status="error",
+            )
             logger.exception("CodeWikiAgent run failed. %s", diagnostics)
             raise RuntimeError(diagnostics) from exc
         output = str(result.output).strip()
         if not output:
             output = "No answer generated."
+        self._push_trace_event(
+            session=session,
+            event_type="content",
+            title="回答",
+            content=output,
+            collapsed=False,
+            status="ok",
+        )
 
         now = datetime.now()
         session.updated_at = now
         session.model_name = model_name
         session.history.append({"role": "user", "content": user_query})
         session.history.append({"role": "assistant", "content": output})
+        trace_events = [dict(item) for item in session.trace_events]
 
         return {
             "protocol": "a2ui-0.1",
@@ -744,7 +929,7 @@ class CodeWikiChatService:
             "agent": "CodeWikiAgent",
             "model": model_name,
             "output": output,
-            "messages": [{"role": "assistant", "content": output}],
-            "events": [{"type": "assistant_message", "content": output}],
+            "messages": [{"role": "assistant", "content": output, "events": trace_events}],
+            "events": trace_events,
             "timestamp": now.isoformat(),
         }

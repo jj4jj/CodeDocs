@@ -1532,13 +1532,177 @@ __CW_SHARED_UI_TOKENS__
             background: #eaf3fe;
             border-color: #adc8e5;
             color: #294663;
+            white-space: normal;
+            padding: 10px 11px;
         }
 
-        .chat-bubble.assistant.streaming::after {
-            content: "▋";
-            display: inline-block;
-            margin-left: 2px;
-            animation: chatCursorBlink 0.9s steps(1) infinite;
+        .chat-stream-status {
+            font-size: 0.74rem;
+            color: #4a6786;
+            display: flex;
+            align-items: center;
+            gap: 7px;
+            margin-bottom: 6px;
+        }
+
+        .chat-stream-status::before {
+            content: "";
+            width: 8px;
+            height: 8px;
+            border-radius: 999px;
+            background: #6f9cc8;
+            animation: chatPulse 1.1s ease-in-out infinite;
+        }
+
+        .chat-stream-content {
+            min-height: 1.2em;
+            white-space: pre-wrap;
+        }
+
+        .chat-bubble.assistant.structured {
+            white-space: normal;
+            padding: 10px 11px;
+        }
+
+        .chat-event-block + .chat-event-block {
+            margin-top: 8px;
+        }
+
+        .chat-event-details {
+            border: 1px solid var(--line);
+            border-radius: var(--radius-sm);
+            background: var(--surface);
+            overflow: hidden;
+        }
+
+        .chat-event-details[open] {
+            background: #fbfdff;
+        }
+
+        .chat-event-summary {
+            list-style: none;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 7px 9px;
+            font-size: 0.75rem;
+            font-weight: 600;
+            color: #415b78;
+            user-select: none;
+        }
+
+        .chat-event-summary::-webkit-details-marker {
+            display: none;
+        }
+
+        .chat-event-tag {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            min-width: 44px;
+            height: 19px;
+            padding: 0 6px;
+            border-radius: 999px;
+            font-size: 0.68rem;
+            letter-spacing: 0.01em;
+            border: 1px solid transparent;
+            flex: 0 0 auto;
+        }
+
+        .chat-event-title {
+            flex: 1 1 auto;
+            min-width: 0;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .chat-event-status {
+            font-size: 0.68rem;
+            padding: 1px 5px;
+            border-radius: 999px;
+            border: 1px solid transparent;
+            text-transform: uppercase;
+            letter-spacing: 0.02em;
+            flex: 0 0 auto;
+        }
+
+        .chat-event-status.ok {
+            color: #21633f;
+            background: #e9f8ef;
+            border-color: #9cccb0;
+        }
+
+        .chat-event-status.error {
+            color: #8f2b2b;
+            background: #fbecec;
+            border-color: #ebb0b0;
+        }
+
+        .chat-event-status.running {
+            color: #7a5d11;
+            background: #fff8e3;
+            border-color: #e3d08e;
+        }
+
+        .chat-event-body {
+            padding: 8px 9px 9px;
+            border-top: 1px dashed var(--line);
+        }
+
+        .chat-event-io-title {
+            font-size: 0.68rem;
+            color: var(--muted);
+            margin-bottom: 3px;
+        }
+
+        .chat-event-io {
+            margin: 0 0 7px;
+            padding: 6px 7px;
+            border: 1px solid var(--line);
+            border-radius: 4px;
+            background: var(--surface-soft);
+            color: var(--text);
+            font-size: 0.72rem;
+            line-height: 1.4;
+            overflow-x: auto;
+            white-space: pre-wrap;
+        }
+
+        .chat-event-content {
+            font-size: 0.79rem;
+            line-height: 1.5;
+        }
+
+        .chat-event-thinking .chat-event-tag {
+            color: #6f4f00;
+            background: #fff3cf;
+            border-color: #e7d093;
+        }
+
+        .chat-event-tool .chat-event-tag {
+            color: #204f78;
+            background: #e7f3fe;
+            border-color: #a6c7e3;
+        }
+
+        .chat-event-skill .chat-event-tag {
+            color: #5c356f;
+            background: #f2eaff;
+            border-color: #ccb6e7;
+        }
+
+        .chat-event-content-block .chat-event-tag {
+            color: #285931;
+            background: #e8f8ed;
+            border-color: #9acaa7;
+        }
+
+        @keyframes chatPulse {
+            0% { transform: scale(0.85); opacity: 0.8; }
+            50% { transform: scale(1.15); opacity: 1; }
+            100% { transform: scale(0.85); opacity: 0.8; }
         }
 
         @keyframes chatCursorBlink {
@@ -1619,6 +1783,55 @@ __CW_SHARED_UI_TOKENS__
             background: #21364d;
             border-color: #4f7298;
             color: #d7e9fb;
+        }
+
+        [data-theme="dark"] .chat-stream-status {
+            color: #98bcde;
+        }
+
+        [data-theme="dark"] .chat-stream-status::before {
+            background: #9ec8f1;
+        }
+
+        [data-theme="dark"] .chat-event-details {
+            background: #162432;
+            border-color: #354a63;
+        }
+
+        [data-theme="dark"] .chat-event-details[open] {
+            background: #1b2c3d;
+        }
+
+        [data-theme="dark"] .chat-event-summary {
+            color: #bdd6ee;
+        }
+
+        [data-theme="dark"] .chat-event-body {
+            border-top-color: #38506a;
+        }
+
+        [data-theme="dark"] .chat-event-io {
+            background: #132130;
+            border-color: #35506a;
+            color: #dbe8f6;
+        }
+
+        [data-theme="dark"] .chat-event-status.ok {
+            color: #90d9ab;
+            background: #193926;
+            border-color: #2f6f47;
+        }
+
+        [data-theme="dark"] .chat-event-status.error {
+            color: #f2b1b1;
+            background: #3e1d1d;
+            border-color: #7d3a3a;
+        }
+
+        [data-theme="dark"] .chat-event-status.running {
+            color: #f1d792;
+            background: #3b3218;
+            border-color: #7f6b31;
         }
 
         .chat-input-wrap {
@@ -2999,6 +3212,83 @@ __CW_SHARED_UI_TOKENS__
                 return escapeHtml(text);
             };
 
+            const CHAT_EVENT_META = {
+                thinking: { label: "思考块", className: "chat-event-thinking", defaultCollapsed: true },
+                tool: { label: "工具块", className: "chat-event-tool", defaultCollapsed: true },
+                skill: { label: "SKILL块", className: "chat-event-skill", defaultCollapsed: true },
+                content: { label: "内容块", className: "chat-event-content-block", defaultCollapsed: false }
+            };
+
+            const normalizeAssistantEvents = (events, fallbackText) => {
+                const list = Array.isArray(events)
+                    ? events.filter(function(item) { return item && typeof item === "object"; })
+                    : [];
+                if (!list.length) {
+                    return [{
+                        type: "content",
+                        title: "回答",
+                        content: String(fallbackText || ""),
+                        collapsed: false,
+                        status: "ok"
+                    }];
+                }
+                const normalized = list.map(function(item) {
+                    return {
+                        type: String(item.type || "content").toLowerCase(),
+                        title: String(item.title || ""),
+                        content: String(item.content || ""),
+                        input: String(item.input || ""),
+                        status: String(item.status || ""),
+                        collapsed: typeof item.collapsed === "boolean" ? item.collapsed : undefined
+                    };
+                });
+                const hasContent = normalized.some(function(item) { return item.type === "content"; });
+                if (!hasContent && String(fallbackText || "").trim()) {
+                    normalized.push({
+                        type: "content",
+                        title: "回答",
+                        content: String(fallbackText || ""),
+                        collapsed: false,
+                        status: "ok"
+                    });
+                }
+                return normalized;
+            };
+
+            const renderAssistantStructured = (events, fallbackText) => {
+                const normalized = normalizeAssistantEvents(events, fallbackText);
+                return normalized.map(function(event, index) {
+                    const eventType = CHAT_EVENT_META[event.type] ? event.type : "content";
+                    const meta = CHAT_EVENT_META[eventType];
+                    const eventTitle = event.title || meta.label;
+                    const status = event.status ? event.status.toLowerCase() : "";
+                    const collapsed = typeof event.collapsed === "boolean" ? event.collapsed : meta.defaultCollapsed;
+                    const openAttr = collapsed ? "" : " open";
+                    const statusClass = (status === "ok" || status === "error" || status === "running") ? status : "";
+                    const statusLabelMap = { ok: "OK", error: "ERROR", running: "RUNNING" };
+                    const statusLabel = statusClass ? (statusLabelMap[statusClass] || statusClass.toUpperCase()) : "";
+                    const inputHtml = event.input
+                        ? `<div class="chat-event-io-title">输入参数</div><pre class="chat-event-io">${escapeHtml(event.input)}</pre>`
+                        : "";
+                    const contentHtml = renderMarkdown(event.content || "");
+                    return `
+                        <div class="chat-event-block ${meta.className}">
+                            <details class="chat-event-details" ${openAttr}>
+                                <summary class="chat-event-summary">
+                                    <span class="chat-event-tag">${meta.label}</span>
+                                    <span class="chat-event-title">${escapeHtml(eventTitle)}</span>
+                                    ${statusLabel ? `<span class="chat-event-status ${statusClass}">${statusLabel}</span>` : ""}
+                                </summary>
+                                <div class="chat-event-body">
+                                    ${inputHtml}
+                                    <div class="chat-event-content">${contentHtml}</div>
+                                </div>
+                            </details>
+                        </div>
+                    `;
+                }).join("");
+            };
+
             const renderSessionOptions = () => {
                 chatSessionSelectEl.innerHTML = "";
                 chatStore.sessions.forEach(function(session) {
@@ -3018,8 +3308,13 @@ __CW_SHARED_UI_TOKENS__
                     const bubble = document.createElement("div");
                     bubble.className = "chat-bubble " + (msg.role === "user" ? "user" : "assistant");
                     if (msg.role === "assistant") {
-                        bubble.classList.add("markdown");
-                        bubble.innerHTML = renderMarkdown(msg.content || "");
+                        if (Array.isArray(msg.events) && msg.events.length) {
+                            bubble.classList.add("structured");
+                            bubble.innerHTML = renderAssistantStructured(msg.events, msg.content || "");
+                        } else {
+                            bubble.classList.add("markdown");
+                            bubble.innerHTML = renderMarkdown(msg.content || "");
+                        }
                     } else {
                         bubble.textContent = String(msg.content || "");
                     }
@@ -3054,13 +3349,17 @@ __CW_SHARED_UI_TOKENS__
                 persistChatStore();
             };
 
-            const commitAssistantMessage = (text) => {
+            const commitAssistantMessage = (text, events) => {
                 const session = getActiveSession();
                 if (!session) return;
                 if (!Array.isArray(session.messages)) {
                     session.messages = [];
                 }
-                session.messages.push({ role: "assistant", content: text || "" });
+                session.messages.push({
+                    role: "assistant",
+                    content: text || "",
+                    events: Array.isArray(events) ? events : []
+                });
                 session.updatedAt = nowText();
                 persistChatStore();
             };
@@ -3068,18 +3367,31 @@ __CW_SHARED_UI_TOKENS__
             const createStreamingAssistantBubble = () => {
                 const bubble = document.createElement("div");
                 bubble.className = "chat-bubble assistant streaming";
-                bubble.textContent = "正在思考...";
+                bubble.innerHTML = `
+                    <div class="chat-stream-status">正在思考...</div>
+                    <div class="chat-stream-content"></div>
+                `;
+                const statusEl = bubble.querySelector(".chat-stream-status");
+                const contentEl = bubble.querySelector(".chat-stream-content");
                 chatMessagesEl.appendChild(bubble);
                 chatMessagesEl.scrollTop = chatMessagesEl.scrollHeight;
                 return {
                     update(partialText) {
-                        bubble.textContent = String(partialText || " ");
+                        if (contentEl) contentEl.textContent = String(partialText || " ");
                         chatMessagesEl.scrollTop = chatMessagesEl.scrollHeight;
                     },
-                    finalize(finalText) {
+                    setStatus(statusText) {
+                        if (statusEl) statusEl.textContent = String(statusText || "处理中...");
+                    },
+                    finalize(finalText, events) {
                         bubble.classList.remove("streaming");
-                        bubble.classList.add("markdown");
-                        bubble.innerHTML = renderMarkdown(finalText || "");
+                        if (Array.isArray(events) && events.length) {
+                            bubble.classList.add("structured");
+                            bubble.innerHTML = renderAssistantStructured(events, finalText || "");
+                        } else {
+                            bubble.classList.add("markdown");
+                            bubble.innerHTML = renderMarkdown(finalText || "");
+                        }
                         chatMessagesEl.scrollTop = chatMessagesEl.scrollHeight;
                     },
                     fail(errorText) {
@@ -3087,6 +3399,25 @@ __CW_SHARED_UI_TOKENS__
                         bubble.textContent = String(errorText || "请求失败");
                         chatMessagesEl.scrollTop = chatMessagesEl.scrollHeight;
                     }
+                };
+            };
+
+            const createWaitingAnimator = (streamingBubble) => {
+                const phases = [
+                    "正在分析问题",
+                    "正在检索文档",
+                    "正在读取代码",
+                    "正在整理回答"
+                ];
+                let tick = 0;
+                const timer = window.setInterval(function() {
+                    const phase = phases[Math.floor(tick / 4) % phases.length];
+                    const dots = ".".repeat((tick % 3) + 1);
+                    streamingBubble.setStatus(phase + dots);
+                    tick += 1;
+                }, 420);
+                return function stop() {
+                    window.clearInterval(timer);
                 };
             };
 
@@ -3137,12 +3468,18 @@ __CW_SHARED_UI_TOKENS__
                 chatSessionSelectEl.disabled = true;
                 chatNewSessionBtn.disabled = true;
                 const streamingBubble = createStreamingAssistantBubble();
+                const stopWaiting = createWaitingAnimator(streamingBubble);
 
                 const payload = {
                     protocol: protocol,
                     session_id: session.serverSessionId || session.id,
                     message: question,
-                    messages: (session.messages || []).slice(-12),
+                    messages: (session.messages || []).slice(-12).map(function(item) {
+                        return {
+                            role: item.role || "",
+                            content: item.content || ""
+                        };
+                    }),
                     current_page: currentPagePath || "overview.md",
                     version: "{{ current_version or '' }}",
                     lang: "{{ current_lang or '' }}"
@@ -3160,17 +3497,26 @@ __CW_SHARED_UI_TOKENS__
                     }
                     const data = await response.json();
                     const answer = (data && (data.output || (data.messages && data.messages[0] && data.messages[0].content))) || "No response";
+                    const responseEvents = Array.isArray(data && data.events) ? data.events : [];
                     if (data && data.session_id) {
                         session.serverSessionId = data.session_id;
                     }
+                    stopWaiting();
                     await streamTextLike(answer, (partial) => streamingBubble.update(partial));
-                    streamingBubble.finalize(answer);
-                    commitAssistantMessage(answer);
+                    streamingBubble.finalize(answer, responseEvents);
+                    commitAssistantMessage(answer, responseEvents);
                     persistChatStore();
                 } catch (error) {
+                    stopWaiting();
                     const message = "请求失败: " + (error && error.message ? error.message : String(error));
                     streamingBubble.fail(message);
-                    commitAssistantMessage(message);
+                    commitAssistantMessage(message, [{
+                        type: "content",
+                        title: "错误",
+                        content: message,
+                        collapsed: false,
+                        status: "error"
+                    }]);
                 } finally {
                     chatSendBtn.disabled = false;
                     chatSessionSelectEl.disabled = false;
